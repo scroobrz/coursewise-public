@@ -1,0 +1,19 @@
+# Active during local development and e2e runs (-Dspring-boot.run.profiles=dev).
+# Browsers drop cookies marked Secure when received over plain http://, so the
+# trusted-device and session cookies would never persist on http://localhost
+# without overriding coursewise.config.cookie-secure here — server.servlet.session.cookie.secure
+# in application.yml reads from that same key, so this one override covers both.
+coursewise:
+  cors:
+    allowed-origins: http://localhost:4200
+  security:
+    csrf:
+      enabled: false
+  config:
+    cookie-secure: false
+    frontend-url: http://localhost:4200
+
+management:
+  endpoint:
+    health:
+      show-details: always

@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: coursewise-db
+    environment:
+      POSTGRES_DB: coursewise
+      POSTGRES_USER: coursewise
+      POSTGRES_PASSWORD: coursewise
+    ports:
+      - "5432:5432"
+    volumes:
+      - coursewise_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coursewise -d coursewise"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: coursewise-mail
+    ports:
+      - "1025:1025"   # SMTP — Spring Mail sends here
+      - "8025:8025"   # Web UI — open http://localhost:8025 to read emails
+    environment:
+      MP_MAX_MESSAGES: 5000   # default is 500
+
+volumes:
+  coursewise_pgdata:
