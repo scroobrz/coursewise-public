@@ -167,11 +167,11 @@ public class AuthController {
 
     /**
      * Completes the 2FA login by verifying the magic link token.
-     * Creates a session and optionally sets a trusted-device cookie.
+     * Creates a session upon success. Trusting the device is a separate,
+     * optional step handled by {@code POST /trust-device}.
      *
      * @param request            The 2FA verification request
      * @param httpServletRequest The HTTP request (for session creation)
-     * @param httpServletResponse The HTTP response (for setting the trusted-device cookie)
      * @return The authenticated user's info
      */
     @PostMapping("/verify-2fa")
