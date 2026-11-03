@@ -5,6 +5,8 @@ import com.coursewise.auth.exception.EmailNotVerifiedException;
 import com.coursewise.auth.exception.InvalidCredentialsException;
 import com.coursewise.auth.exception.InvalidTokenException;
 import com.coursewise.auth.exception.ResendTooSoonException;
+import com.coursewise.course.exception.CourseNotFoundException;
+
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -51,6 +53,21 @@ public class GlobalExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, detail);
         problem.setType(URI.create("https://coursewise.app/errors/validation"));
         problem.setTitle("Validation Failed");
+        return problem;
+    }
+
+    /**
+     * Handles exceptions thrown when a requested course cannot be found.
+     *
+     * @param ex The CourseNotFoundException
+     * @return A ProblemDetail response with a 404 Not Found status
+     */
+    @ExceptionHandler(CourseNotFoundException.class)
+    public ProblemDetail handleCourseNotFound(CourseNotFoundException ex) {
+        log.warn("Course not found: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+        problem.setType(URI.create("https://coursewise.app/errors/not-found"));
+        problem.setTitle("Course Not Found");
         return problem;
     }
 

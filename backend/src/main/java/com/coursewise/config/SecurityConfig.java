@@ -57,14 +57,16 @@ public class SecurityConfig {
                     }
                 })
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/actuator/health", "/actuator/info").permitAll()
-                        .requestMatchers("/api/v1/config").permitAll()
                         .requestMatchers(
+                                "/actuator/health",
+                                "/actuator/info",
+                                "/api/v1/config",
                                 "/api/v1/auth/register",
                                 "/api/v1/auth/verify-email",
                                 "/api/v1/auth/login",
                                 "/api/v1/auth/verify-2fa",
-                                "/api/v1/auth/resend-verification"
+                                "/api/v1/auth/resend-verification",
+                                "/api/v1/courses/**"
                         ).permitAll()
                         .anyRequest().authenticated() // Everything else requires login
                 )
