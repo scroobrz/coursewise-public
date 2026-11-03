@@ -22,7 +22,7 @@ public class CourseController {
     private final CourseService courseService;
 
     /**
-     * Retrieves a list of all courses available in the system.
+     * Retrieves a list of all courses available in the system, sorted by course code.
      *
      * @return A list of {@link CourseResponse} objects
      */
