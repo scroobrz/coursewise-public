@@ -5,7 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
 
-import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import com.coursewise.course.dto.CourseResponse;
@@ -15,7 +14,6 @@ import com.coursewise.course.dto.CourseResponse;
  * Provides endpoints to list and retrieve individual courses.
  */
 @Slf4j
-@Validated
 @RestController
 @RequestMapping("/api/v1/courses")
 @RequiredArgsConstructor
@@ -37,12 +35,13 @@ public class CourseController {
     /**
      * Retrieves a specific course by its unique code.
      *
-     * @param code The unique course code (e.g., INFR11159)
+     * @param code The unique course code (e.g., INFR11159) - this is case-insensitive and will be normalized to uppercase.
      * @return The corresponding {@link CourseResponse}
      */
     @GetMapping("/{code}")
     public CourseResponse getCourse(@PathVariable String code) {
-        log.info("Fetching course with code: {}", code);
-        return courseService.getCourse(code);
+        String normalizedCode = code.toUpperCase();
+        log.info("Fetching course with code: {}", normalizedCode);
+        return courseService.getCourse(normalizedCode);
     }
 }
