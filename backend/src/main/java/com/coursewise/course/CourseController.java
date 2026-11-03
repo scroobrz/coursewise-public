@@ -40,8 +40,7 @@ public class CourseController {
      */
     @GetMapping("/{code}")
     public CourseResponse getCourse(@PathVariable String code) {
-        String normalizedCode = code.toUpperCase();
-        log.info("Fetching course with code: {}", normalizedCode);
-        return courseService.getCourse(normalizedCode);
+        log.info("Fetching course with code: {}", code);
+        return courseService.getCourse(code);
     }
 }

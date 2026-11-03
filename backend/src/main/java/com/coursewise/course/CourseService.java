@@ -11,6 +11,7 @@ import com.coursewise.course.dto.CourseResponse;
 import com.coursewise.course.exception.CourseNotFoundException;
 
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Service class for managing courses.
@@ -38,12 +39,13 @@ public class CourseService {
     /**
      * Retrieves a single course by its code.
      *
-     * @param code The unique course code
+     * @param code The unique course code (case-insensitive).
      * @return The mapped {@link CourseResponse}
      * @throws {@link CourseNotFoundException} if the course does not exist.
      */
     public CourseResponse getCourse(String code) {
-        return courseRepository.findById(code)
+        String normalizedCode = code.toUpperCase(Locale.ROOT);
+        return courseRepository.findById(normalizedCode)
                 .map(CourseResponse::fromEntity)
                 .orElseThrow(() -> {
                     return new CourseNotFoundException(code);
