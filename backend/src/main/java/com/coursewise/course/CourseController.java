@@ -29,7 +29,7 @@ public class CourseController {
     @GetMapping
     public List<CourseResponse> listCourses() {
         log.info("Fetching all courses");
-        return courseService.getCourses();
+        return courseService.listCourses();
     }
 
     /**

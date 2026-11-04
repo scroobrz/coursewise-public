@@ -30,7 +30,7 @@ public class CourseService {
      *
      * @return A list of mapped {@link CourseResponse} records
      */
-    public List<CourseResponse> getCourses() {
+    public List<CourseResponse> listCourses() {
         return courseRepository.findAll(Sort.by("code")).stream()
                 .map(CourseResponse::fromEntity)
                 .toList();
