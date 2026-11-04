@@ -23,6 +23,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -33,7 +34,6 @@ class MagicLinkServiceTest {
     @Mock private UserRepository userRepository;
 
     private MagicLinkService magicLinkService;
-    private AppConfigProperties appConfig;
 
     // ── Shared test constants ─────────────────────────────────────────────────────────
     private static final int    TEST_TRUSTED_DEVICE_DAYS   = 30;
@@ -42,20 +42,24 @@ class MagicLinkServiceTest {
     private static final String TEST_FRONTEND_URL           = "http://localhost:4200";
     private static final String TEST_FROM_ADDRESS           = "noreply@coursewise.com";
 
+    private static final AppConfigProperties TEST_CONFIG = new AppConfigProperties(
+        true, TEST_FRONTEND_URL, TEST_FROM_ADDRESS, 
+        new AppConfigResponse(
+            TEST_TRUSTED_DEVICE_DAYS, TEST_RESEND_COOLDOWN_SECS, 
+            TEST_MAGIC_LINK_EXPIRY_MINS,
+            new ValidationProperties(
+                "^[sS]\\d{7}@ed\\.ac\\.uk$", 8, 128,
+                "^(?=.*[A-Z])(?=.*[^a-zA-Z]).+$",
+                "Must contain at least one uppercase letter and one non-alphabetic character"
+            )
+        )
+    );
+
     @BeforeEach
     void setUp() {
-        appConfig = new AppConfigProperties(
-                true, TEST_FRONTEND_URL, TEST_FROM_ADDRESS,
-                new AppConfigResponse(
-                        TEST_TRUSTED_DEVICE_DAYS, TEST_RESEND_COOLDOWN_SECS, TEST_MAGIC_LINK_EXPIRY_MINS,
-                        new ValidationProperties(
-                                "^[sS]\\d{7}@ed\\.ac\\.uk$", 8, 128,
-                                "^(?=.*[A-Z])(?=.*[^a-zA-Z]).+$",
-                                "Must contain at least one uppercase letter and one non-alphabetic character"
-                        )
-                )
-        );
-        magicLinkService = new MagicLinkService(mailSender, appConfig, magicLinkRepository, userRepository);
+        magicLinkService = new MagicLinkService(
+            mailSender, TEST_CONFIG, 
+            magicLinkRepository, userRepository);
     }
 
     @Nested
@@ -87,7 +91,7 @@ class MagicLinkServiceTest {
             verify(mailSender).send(mailCaptor.capture());
             SimpleMailMessage sentEmail = mailCaptor.getValue();
             assertThat(sentEmail.getTo()).containsExactly(email);
-            assertThat(sentEmail.getFrom()).isEqualTo(appConfig.fromAddress());
+            assertThat(sentEmail.getFrom()).isEqualTo(TEST_CONFIG.fromAddress());
             assertThat(sentEmail.getText()).contains("/auth/verify-email?token=");
 
             // Extract raw token from email and ensure its hash matches the one in DB
