@@ -36,6 +36,7 @@ import java.util.UUID;
  */
 @Slf4j
 @Service
+@Transactional
 @RequiredArgsConstructor
 public class AuthService {
 
@@ -58,7 +59,6 @@ public class AuthService {
      * @param password The raw (plaintext) password
      * @throws EmailAlreadyRegisteredException if the email is already registered
      */
-    @Transactional
     public void register(String email, String password) {
         log.info("Registration request for user email");
 
@@ -97,7 +97,6 @@ public class AuthService {
      * @return The verified User
      * @throws InvalidTokenException if the token is invalid, expired, or used
      */
-    @Transactional
     public User verifyRegistrationEmail(String token) {
         log.info("Email verification attempt");
         User user = magicLinkService.validateAndConsumeToken(token, MagicLinkPurpose.EMAIL_VERIFICATION);
@@ -126,7 +125,6 @@ public class AuthService {
      * @throws InvalidCredentialsException if email/password is wrong
      * @throws EmailNotVerifiedException   if the user hasn't verified their email
      */
-    @Transactional
     public Optional<User> login(String email, String password, String deviceToken) {
         log.info("Login attempt for user email");
 
@@ -167,7 +165,6 @@ public class AuthService {
      * @return The authenticated user
      * @throws InvalidTokenException if the token is invalid, expired, or used
      */
-    @Transactional
     public User verify2fa(String token) {
         log.info("2FA verification attempt");
         User user = magicLinkService.validateAndConsumeToken(token, MagicLinkPurpose.LOGIN_2FA);
@@ -189,7 +186,6 @@ public class AuthService {
      * @param email The email address to resend verification to
      * @throws ResendTooSoonException if the cooldown has not elapsed
      */
-    @Transactional
     public void resendVerification(String email) {
         log.info("Resend verification request");
 
@@ -216,7 +212,6 @@ public class AuthService {
      * @param userAgent The User-Agent string from the HTTP request
      * @return The raw trusted device token to be returned to the client
      */
-    @Transactional
     public String createTrustedDevice(User user, String userAgent, String existingDeviceToken) {
         String deviceToken;
         String hashedToken;
@@ -277,7 +272,6 @@ public class AuthService {
     /**
      * Updates a user's profile names.
      */
-    @Transactional
     public User updateProfile(UUID id, String firstName, String lastName) {
         User user = getUser(id);
         user.setProfileNames(firstName, lastName);
