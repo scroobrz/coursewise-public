@@ -83,26 +83,6 @@ public class MagicLinkService {
         log.info("2FA email sent");
     }
 
-    /**
-     * Internal helper to dispatch the actual email containing the magic link.
-     *
-     * @param toEmail The recipient's email address
-     * @param link    The full URL including the raw token
-     */
-    private void sendMagicLinkEmail(String toEmail, String link) {
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setTo(toEmail);
-        message.setSubject("Verify your email to log in to your CoursED account");
-        message.setText(
-                "Click the following link to verify your email address:\n\n"
-                + link + "\n\n"
-                + "This link will expire in " + appConfig.shared().magicLinkExpiryMinutes() + " minutes.\n\n"
-        );
-        message.setFrom(appConfig.fromAddress());
-
-        mailSender.send(message);
-    }
-
     // ── Token Validation ──────────────────────────────────────────────────────
 
     /**
@@ -161,6 +141,26 @@ public class MagicLinkService {
         );
 
         return magicLinkRepository.save(magicLink);
+    }
+
+    /**
+     * Dispatches the actual email containing a magic link.
+     *
+     * @param toEmail The recipient's email address
+     * @param link    The full URL including the raw token
+     */
+    private void sendMagicLinkEmail(String toEmail, String link) {
+        SimpleMailMessage message = new SimpleMailMessage();
+        message.setTo(toEmail);
+        message.setSubject("Verify your email to log in to your CoursED account");
+        message.setText(
+                "Click the following link to verify your email address:\n\n"
+                + link + "\n\n"
+                + "This link will expire in " + appConfig.shared().magicLinkExpiryMinutes() + " minutes.\n\n"
+        );
+        message.setFrom(appConfig.fromAddress());
+
+        mailSender.send(message);
     }
 
     /**
