@@ -12,7 +12,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.client.RestTestClient;
-import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+
 import java.util.List;
 import org.springframework.jdbc.core.JdbcTemplate;
 
@@ -32,9 +33,9 @@ class CourseIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    @AfterEach
+    @BeforeEach
     void cleanup() {
-        jdbcTemplate.execute("TRUNCATE TABLE users, magic_links, courses CASCADE");
+        jdbcTemplate.execute("TRUNCATE TABLE users, magic_links, courses, reviews CASCADE");
     }
 
     private Course course(String code, String title) {

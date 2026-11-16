@@ -7,7 +7,7 @@ import com.coursewise.auth.dto.LoginResponse;
 import com.coursewise.auth.dto.RegisterRequest;
 import com.coursewise.auth.dto.UserInfoResponse;
 import com.coursewise.auth.dto.VerifyEmailRequest;
-import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -63,7 +63,7 @@ class AuthIntegrationTest {
     @MockitoBean
     private JavaMailSender mailSender;
 
-    @AfterEach
+    @BeforeEach
     void cleanup() {
         jdbcTemplate.execute("TRUNCATE TABLE users, magic_links, trusted_devices CASCADE");
     }
