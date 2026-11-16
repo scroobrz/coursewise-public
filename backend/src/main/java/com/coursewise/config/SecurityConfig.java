@@ -7,6 +7,7 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.web.cors.CorsConfiguration;
@@ -65,9 +66,9 @@ public class SecurityConfig {
                                 "/api/v1/auth/verify-email",
                                 "/api/v1/auth/login",
                                 "/api/v1/auth/verify-2fa",
-                                "/api/v1/auth/resend-verification",
-                                "/api/v1/courses/**"
+                                "/api/v1/auth/resend-verification"
                         ).permitAll()
+                        .requestMatchers(HttpMethod.GET, "/api/v1/courses/**").permitAll() // Allow unauthenticated course browsing + review reading
                         .anyRequest().authenticated() // Everything else requires login
                 )
                 .exceptionHandling(exceptions -> exceptions
