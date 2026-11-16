@@ -4,6 +4,7 @@ import com.coursewise.auth.dto.LoginRequest;
 import com.coursewise.auth.dto.RegisterRequest;
 import com.coursewise.auth.dto.ResendVerificationRequest;
 import com.coursewise.auth.dto.UpdateProfileRequest;
+import com.coursewise.auth.dto.UserInfoResponse;
 import com.coursewise.auth.dto.VerifyEmailRequest;
 import com.coursewise.auth.exception.EmailAlreadyRegisteredException;
 import com.coursewise.auth.exception.EmailNotVerifiedException;
@@ -19,6 +20,7 @@ import com.coursewise.config.AppConfigResponse.ValidationProperties;
 import com.coursewise.config.GlobalExceptionHandler;
 import com.coursewise.config.SecurityConfig;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -50,6 +52,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -180,7 +183,7 @@ class AuthControllerWebTest {
         void register_withDuplicateEmail_returns409() throws Exception {
             RegisterRequest request = new RegisterRequest("s1234567@ed.ac.uk", "securePassword123");
             doThrow(new EmailAlreadyRegisteredException())
-                    .when(authService).register(anyString(), anyString());
+                .when(authService).register(anyString(), anyString());
 
             mockMvc.perform(post("/api/v1/auth/register").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -198,7 +201,8 @@ class AuthControllerWebTest {
             User mockUser = new User("s1234567@ed.ac.uk");
             ReflectionTestUtils.setField(mockUser, "id", UUID.randomUUID());
 
-            when(authService.verifyRegistrationEmail(eq("valid-token"))).thenReturn(mockUser);
+            when(authService.verifyRegistrationEmail(eq("valid-token"), any(HttpServletRequest.class)))
+                .thenReturn(UserInfoResponse.from(mockUser));
 
             mockMvc.perform(post("/api/v1/auth/verify-email").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -211,7 +215,7 @@ class AuthControllerWebTest {
         void verifyEmail_withInvalidToken_returns400() throws Exception {
             VerifyEmailRequest request = new VerifyEmailRequest("bad-token");
             doThrow(new InvalidTokenException("Invalid token"))
-                    .when(authService).verifyRegistrationEmail("bad-token");
+                .when(authService).verifyRegistrationEmail(eq("bad-token"), any(HttpServletRequest.class));
 
             mockMvc.perform(post("/api/v1/auth/verify-email").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -226,7 +230,8 @@ class AuthControllerWebTest {
         @Test
         void login_with2faRequired_returns200WithStatus() throws Exception {
             LoginRequest request = new LoginRequest("s1234567@ed.ac.uk", "Password123");
-            when(authService.login(anyString(), anyString(), any())).thenReturn(Optional.empty());
+            when(authService.login(anyString(), anyString(), any(), any(HttpServletRequest.class)))
+                .thenReturn(Optional.empty());
 
             mockMvc.perform(post("/api/v1/auth/login").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -242,7 +247,8 @@ class AuthControllerWebTest {
             User mockUser = new User("s1234567@ed.ac.uk");
             ReflectionTestUtils.setField(mockUser, "id", UUID.randomUUID());
 
-            when(authService.login(anyString(), anyString(), any())).thenReturn(Optional.of(mockUser));
+            when(authService.login(anyString(), anyString(), any(), any(HttpServletRequest.class)))
+                .thenReturn(Optional.of(UserInfoResponse.from(mockUser)));
 
             mockMvc.perform(post("/api/v1/auth/login").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -255,8 +261,8 @@ class AuthControllerWebTest {
         @Test
         void login_withWrongCredentials_returns401() throws Exception {
             LoginRequest request = new LoginRequest("s1234567@ed.ac.uk", "wrong");
-            when(authService.login(anyString(), anyString(), any()))
-                    .thenThrow(new InvalidCredentialsException());
+            when(authService.login(anyString(), anyString(), any(), any(HttpServletRequest.class)))
+                .thenThrow(new InvalidCredentialsException());
 
             mockMvc.perform(post("/api/v1/auth/login").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -267,8 +273,8 @@ class AuthControllerWebTest {
         @Test
         void login_withUnverifiedEmail_returns403() throws Exception {
             LoginRequest request = new LoginRequest("s1234567@ed.ac.uk", "Password123");
-            when(authService.login(anyString(), anyString(), any()))
-                    .thenThrow(new EmailNotVerifiedException());
+            when(authService.login(anyString(), anyString(), any(), any(HttpServletRequest.class)))
+                .thenThrow(new EmailNotVerifiedException());
 
             mockMvc.perform(post("/api/v1/auth/login").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -281,13 +287,13 @@ class AuthControllerWebTest {
     class Verify2faEndpoint {
 
         @Test
-        void verify2fa_withValidToken_returns200AndSetsSession() throws Exception {
+        void verify2fa_withValidToken_returns200WithUserInfo() throws Exception {
             VerifyEmailRequest request = new VerifyEmailRequest("valid-token");
             User mockUser = new User("s1234567@ed.ac.uk");
             ReflectionTestUtils.setField(mockUser, "id", UUID.randomUUID());
 
-            when(authService.verify2fa(eq("valid-token")))
-                    .thenReturn(mockUser);
+            when(authService.verify2fa(eq("valid-token"), any(HttpServletRequest.class)))
+                .thenReturn(UserInfoResponse.from(mockUser));
 
             mockMvc.perform(post("/api/v1/auth/verify-2fa").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -300,7 +306,7 @@ class AuthControllerWebTest {
         void verify2fa_withInvalidToken_returns400() throws Exception {
             VerifyEmailRequest request = new VerifyEmailRequest("bad-token");
             doThrow(new InvalidTokenException("Invalid token"))
-                    .when(authService).verify2fa(anyString());
+                .when(authService).verify2fa(anyString(), any(HttpServletRequest.class));
 
             mockMvc.perform(post("/api/v1/auth/verify-2fa").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -337,7 +343,7 @@ class AuthControllerWebTest {
             ResendVerificationRequest request = new ResendVerificationRequest("s1234567@ed.ac.uk");
             
             doThrow(new ResendTooSoonException())
-                    .when(authService).resendVerification(anyString());
+                .when(authService).resendVerification(anyString());
 
             mockMvc.perform(post("/api/v1/auth/resend-verification").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -387,7 +393,8 @@ class AuthControllerWebTest {
 
             User mockUser = new User("s1234567@ed.ac.uk");
             ReflectionTestUtils.setField(mockUser, "id", userId);
-            when(authService.updateProfile(eq(userId), any(), any())).thenReturn(mockUser);
+            when(authService.updateProfile(eq(userId), any(), any()))
+                .thenReturn(UserInfoResponse.from(mockUser));
 
             mockMvc.perform(patch("/api/v1/auth/profile").session(session).contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(new UpdateProfileRequest("John", "Doe"))).with(csrf()))
@@ -416,7 +423,8 @@ class AuthControllerWebTest {
             User mockUser = new User("s1234567@ed.ac.uk");
             ReflectionTestUtils.setField(mockUser, "id", userId);
             when(authService.getUser(userId)).thenReturn(mockUser);
-            when(authService.createTrustedDevice(eq(mockUser), any(), any())).thenReturn("new-device-token");
+            when(authService.createTrustedDevice(eq(mockUser), any(), any()))
+                .thenReturn("new-device-token");
 
             mockMvc.perform(post("/api/v1/auth/trust-device").with(csrf()).session(session))
                     .andExpect(status().isOk())
@@ -431,7 +439,7 @@ class AuthControllerWebTest {
         }
 
         @Test
-        void logout_clearsSession() throws Exception {
+        void logout_delegatesToServiceAndReturns200() throws Exception {
             MockHttpSession session = new MockHttpSession();
             SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
             UUID userId = UUID.randomUUID();
@@ -442,6 +450,8 @@ class AuthControllerWebTest {
 
             mockMvc.perform(post("/api/v1/auth/logout").with(csrf()).session(session))
                     .andExpect(status().isOk());
+
+            verify(authService).logout(any(HttpServletRequest.class));
         }
 
         @Test

@@ -1,5 +1,6 @@
 package com.coursewise.auth;
 
+import com.coursewise.auth.dto.UserInfoResponse;
 import com.coursewise.auth.exception.EmailAlreadyRegisteredException;
 import com.coursewise.auth.exception.EmailNotVerifiedException;
 import com.coursewise.auth.exception.InvalidCredentialsException;
@@ -7,15 +8,24 @@ import com.coursewise.auth.exception.InvalidTokenException;
 import com.coursewise.auth.exception.ResendTooSoonException;
 import com.coursewise.config.AppConfigProperties;
 
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
 import java.time.OffsetDateTime;
 import java.util.Base64;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -60,7 +70,6 @@ public class AuthService {
      * @throws EmailAlreadyRegisteredException if the email is already registered
      */
     public void register(String email, String password) {
-        log.info("Registration request for user email");
 
         Optional<User> existing = userRepository.findByEmail(email);
         if (existing.isPresent()) {
@@ -73,7 +82,7 @@ public class AuthService {
             user.setPasswordHash(passwordEncoder.encode(password));
             userRepository.save(user);
             magicLinkService.sendVerificationEmail(email);
-            log.info("Idempotent re-registration: password updated, verification email resent");
+            log.info("Idempotent re-registration: password updated, verification email resent to email of user {}", user.getId());
             return;
         }
 
@@ -82,30 +91,33 @@ public class AuthService {
         userRepository.save(user);
 
         magicLinkService.sendVerificationEmail(email);
-        log.info("Registration successful, verification email sent");
+        log.info("Registration successful, verification email sent to email of user {}", user.getId());
     }
 
     // ── Email Verification ────────────────────────────────────────────────────
 
     /**
      * Verifies a user's email address using a magic link token sent during
-     * registration. Marks the user as {@code emailVerified=true}.
+     * registration. Marks the user as {@code emailVerified=true} and creates 
+     * a session.
      * <p>
-     * Returns the user so a session can be created automatically.
+     * Returns the user info for the newly verified user.
      *
      * @param token The magic link token from the verification email
-     * @return The verified User
+     * @param httpServletRequest The HTTP request to create a session for
+     * @return A {@link UserInfoResponse} for the verified user
      * @throws InvalidTokenException if the token is invalid, expired, or used
      */
-    public User verifyRegistrationEmail(String token) {
+    public UserInfoResponse verifyRegistrationEmail(String token, HttpServletRequest httpServletRequest) {
         log.info("Email verification attempt");
         User user = magicLinkService.validateAndConsumeToken(token, MagicLinkPurpose.EMAIL_VERIFICATION);
 
         user.markEmailVerified();
         userRepository.save(user);
+        createSession(user, httpServletRequest);
 
-        log.info("Email verified successfully");
-        return user;
+        log.info("Email verified successfully, session created for user: {}", user.getId());
+        return UserInfoResponse.from(user);
     }
 
     // ── Login (Password Step) ─────────────────────────────────────────────────
@@ -114,19 +126,19 @@ public class AuthService {
      * Authenticates a user by email and password (step 1 of 2FA).
      * <p>
      * If a valid trusted-device token is provided, the user is fully
-     * authenticated immediately (2FA bypass). Otherwise, a 2FA magic link
-     * is sent to their email.
+     * authenticated immediately (2FA bypass) and a session is created. 
+     * Otherwise, a 2FA magic link is sent to their email.
      *
      * @param email       The user's email
      * @param password    The user's password
      * @param deviceToken An optional trusted device token from a cookie
-     * @return The authenticated User if trusted device is valid, or
-     *         {@link Optional#empty()} if 2FA is required
+     * @param httpServletRequest The HTTP request to create a session for
+     * @return A {@link UserInfoResponse} for the verified user if trusted 
+     * device is valid, or {@link Optional#empty()} if 2FA is required
      * @throws InvalidCredentialsException if email/password is wrong
      * @throws EmailNotVerifiedException   if the user hasn't verified their email
      */
-    public Optional<User> login(String email, String password, String deviceToken) {
-        log.info("Login attempt for user email");
+    public Optional<UserInfoResponse> login(String email, String password, String deviceToken, HttpServletRequest httpServletRequest) {
 
         User user = userRepository.findByEmail(email)
                 .orElseThrow(InvalidCredentialsException::new);
@@ -143,14 +155,16 @@ public class AuthService {
         if (deviceToken != null && !deviceToken.isBlank()) {
             String hashedToken = TokenHasher.hash(deviceToken);
             Optional<TrustedDevice> trustedDevice = trustedDeviceRepository.findByDeviceTokenAndUserId(hashedToken, user.getId());
+
             if (trustedDevice.isPresent() && !trustedDevice.get().isExpired()) {
-                log.info("Trusted device found, skipping 2FA");
-                return Optional.of(user);
+                log.info("Trusted device {} found, skipping 2FA - login successful and session created for user {}", trustedDevice.get().getId(), user.getId());
+                createSession(user, httpServletRequest);
+                return Optional.of(UserInfoResponse.from(user));
             }
         }
 
         magicLinkService.send2faEmail(email);
-        log.info("2FA magic link sent");
+        log.info("2FA required, magic link sent to email of user {}", user.getId());
 
         return Optional.empty();
     }
@@ -159,17 +173,19 @@ public class AuthService {
 
     /**
      * Completes the 2FA login step by verifying the magic link token.
+     * Creates a session on success.
      * <p>
      *
-     * @param token       The magic link token from the 2FA email
-     * @return The authenticated user
+     * @param token The magic link token from the 2FA email
+     * @param httpServletRequest The HTTP request to create a session for
+     * @return A {@link UserInfoResponse} for the verified user
      * @throws InvalidTokenException if the token is invalid, expired, or used
      */
-    public User verify2fa(String token) {
-        log.info("2FA verification attempt");
+    public UserInfoResponse verify2fa(String token, HttpServletRequest httpServletRequest) {
         User user = magicLinkService.validateAndConsumeToken(token, MagicLinkPurpose.LOGIN_2FA);
-        log.info("2FA verification successful");
-        return user;
+        createSession(user, httpServletRequest);
+        log.info("2FA verification successful, session created for user: {}", user.getId());
+        return UserInfoResponse.from(user);
     }
 
     // ── Resend Verification ───────────────────────────────────────────────────
@@ -202,7 +218,7 @@ public class AuthService {
         }
         
         magicLinkService.resendVerificationEmail(email);
-        log.info("Verification email resent");
+        log.info("Verification email resent to email of user {}", user.getId());
     }
 
     /**
@@ -210,6 +226,7 @@ public class AuthService {
      *
      * @param user      The authenticated user
      * @param userAgent The User-Agent string from the HTTP request
+     * @param existingDeviceToken An optional existing trusted device token from a cookie
      * @return The raw trusted device token to be returned to the client
      */
     public String createTrustedDevice(User user, String userAgent, String existingDeviceToken) {
@@ -237,8 +254,8 @@ public class AuthService {
         Optional<TrustedDevice> existing = trustedDeviceRepository.findByDeviceTokenAndUserId(hashedToken, user.getId());
         if (existing.isPresent()) {
             existing.get().renew(OffsetDateTime.now().plusDays(appConfig.shared().trustedDeviceDays()));
-            trustedDeviceRepository.save(existing.get());
-            log.info("Trusted device expiry refreshed for user");
+            TrustedDevice trustedDevice = trustedDeviceRepository.save(existing.get());
+            log.info("Trusted device {} expiry refreshed for user {}", trustedDevice.getId(), user.getId());
             return deviceToken;
         }
 
@@ -249,9 +266,25 @@ public class AuthService {
                 deviceName,
                 OffsetDateTime.now().plusDays(appConfig.shared().trustedDeviceDays())
         );
-        trustedDeviceRepository.save(device);
-        log.info("Trusted device created for user");
+        TrustedDevice trustedDevice = trustedDeviceRepository.save(device);
+        log.info("Trusted device {} created for user {}", trustedDevice.getId(), user.getId());
         return deviceToken;
+    }
+
+    // ── Logout ───────────────────────────────────────────────────────────────
+
+    /**
+     * Logs out the user by invalidating their session and clearing the security context.
+     *
+     * @param httpServletRequest The HTTP request containing the session
+     */
+    public void logout(HttpServletRequest httpServletRequest) {
+        HttpSession session = httpServletRequest.getSession(false);
+        if (session != null) {
+            session.invalidate();
+        }
+        SecurityContextHolder.clearContext();
+        log.info("User logged out, session invalidated and security context cleared");
     }
 
     // ── User Management ───────────────────────────────────────────────────────
@@ -271,15 +304,39 @@ public class AuthService {
 
     /**
      * Updates a user's profile names.
+     * 
+     * @param id The UUID of the user
+     * @param firstName The new first name
+     * @param lastName The new last name
+     * @return A {@link UserInfoResponse} with the updated user info
+     * @throws IllegalArgumentException if the user is not found
      */
-    public User updateProfile(UUID id, String firstName, String lastName) {
-        User user = getUser(id);
+    public UserInfoResponse updateProfile(UUID id, String firstName, String lastName) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("User not found: " + id));
         user.setProfileNames(firstName, lastName);
-        return userRepository.save(user);
+        log.info("Profile names updated for user {}", user.getId());
+        userRepository.save(user);
+        return UserInfoResponse.from(user);
     }
 
     // ── Internal Helpers ──────────────────────────────────────────────────────
 
+    private void createSession(User user, HttpServletRequest httpServletRequest) {
+        UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
+                user.getId().toString(),
+                null,
+                List.of(new SimpleGrantedAuthority("ROLE_USER"))
+        );
+
+        SecurityContext context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(authentication);
+        SecurityContextHolder.setContext(context);
+
+        HttpSession session = httpServletRequest.getSession(true);
+        session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, context);
+    }
+    
     private String generateSecureToken() {
         byte[] bytes = new byte[32];
         SECURE_RANDOM.nextBytes(bytes);

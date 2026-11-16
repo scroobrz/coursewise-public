@@ -67,7 +67,9 @@ public class MagicLinkService {
                         throw new ResendTooSoonException();
                     }
                 });
+
         sendVerificationEmail(toEmail);
+        log.info("Verification email resent");
     }
 
     /**
@@ -101,7 +103,6 @@ public class MagicLinkService {
         if (magicLink.getPurpose() != expectedPurpose) {
             throw new InvalidTokenException("Invalid token");
         }
-
         if (magicLink.isUsed()) {
             throw new InvalidTokenException("This link has already been used");
         }
@@ -115,6 +116,7 @@ public class MagicLinkService {
         User user = userRepository.findByEmail(magicLink.getEmail())
                 .orElseThrow(() -> new InvalidTokenException("No account found for this email"));
 
+        log.info("Token validated and consumed for user: {}", user.getId());
         return user;
     }
 
@@ -140,7 +142,9 @@ public class MagicLinkService {
                 OffsetDateTime.now().plusMinutes(appConfig.shared().magicLinkExpiryMinutes())
         );
 
-        return magicLinkRepository.save(magicLink);
+        magicLinkRepository.save(magicLink);
+        log.info("Generated new magic link with purpose: {}", purpose);
+        return magicLink;
     }
 
     /**
@@ -161,6 +165,7 @@ public class MagicLinkService {
         message.setFrom(appConfig.fromAddress());
 
         mailSender.send(message);
+        log.info("Magic link email sent");
     }
 
     /**
@@ -174,7 +179,7 @@ public class MagicLinkService {
         if (!activeLinks.isEmpty()) {
             activeLinks.forEach(MagicLink::markAsUsed);
             magicLinkRepository.saveAll(activeLinks);
-            log.debug("Invalidated {} existing magic link(s) for email", activeLinks.size());
+            log.debug("Invalidated {} existing magic link(s)", activeLinks.size());
         }
     }
 

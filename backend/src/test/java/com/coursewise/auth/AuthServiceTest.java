@@ -1,5 +1,6 @@
 package com.coursewise.auth;
 
+import com.coursewise.auth.dto.UserInfoResponse;
 import com.coursewise.auth.exception.EmailAlreadyRegisteredException;
 import com.coursewise.auth.exception.EmailNotVerifiedException;
 import com.coursewise.auth.exception.InvalidCredentialsException;
@@ -9,6 +10,7 @@ import com.coursewise.config.AppConfigProperties;
 import com.coursewise.config.AppConfigResponse;
 import com.coursewise.config.AppConfigResponse.ValidationProperties;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -16,8 +18,13 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpSession;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.OffsetDateTime;
@@ -38,6 +45,7 @@ class AuthServiceTest {
 
     private final PasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
     private AuthService authService;
+    private MockHttpServletRequest request;
 
     // ── Shared test constants ─────────────────────────────────────────────────────────
     private static final int    TEST_TRUSTED_DEVICE_DAYS   = 30;
@@ -64,6 +72,12 @@ class AuthServiceTest {
                 userRepository, trustedDeviceRepository,
                 magicLinkService, passwordEncoder, TEST_CONFIG
         );
+        request = new MockHttpServletRequest();
+    }
+
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
     }
 
     // ── Registration ──────────────────────────────────────────────────────────
@@ -128,8 +142,6 @@ class AuthServiceTest {
             // Verify new magic link generated and sent
             verify(magicLinkService).sendVerificationEmail(eq(email));
         }
-
-        // Note: The logic for invalidating previous links was moved to MagicLinkService.
     }
 
     // ── Email Verification ────────────────────────────────────────────────────
@@ -138,31 +150,35 @@ class AuthServiceTest {
     class VerifyEmail {
 
         @Test
-        void verifyEmail_withValidToken_marksUserAsVerified() {
+        void verifyEmail_withValidToken_returnsUserInfoAndMarksUserAsVerifiedAndCreatesSession() {
             String token = "valid-token";
             String email = "s1234567@ed.ac.uk";
             User user = new User(email, "hashed");
+            ReflectionTestUtils.setField(user, "id", UUID.randomUUID());
 
             when(magicLinkService.validateAndConsumeToken(token, MagicLinkPurpose.EMAIL_VERIFICATION))
                     .thenReturn(user);
 
-            User result = authService.verifyRegistrationEmail(token);
+            UserInfoResponse result = authService.verifyRegistrationEmail(token, request);
 
             assertThat(user.isEmailVerified()).isTrue();
-            assertThat(result).isEqualTo(user);
+            assertThat(result.id()).isEqualTo(user.getId());
+            assertThat(result.email()).isEqualTo(email);
             verify(userRepository).save(user);
+            assertSessionCreatedFor(user);
         }
 
-        // Invalid token handling is now delegated to MagicLinkService.
-        // We can just verify it throws when MagicLinkService throws.
+        // Invalid token handling is delegated to MagicLinkService.
         @Test
-        void verifyEmail_delegatesExceptions() {
+        void verifyEmail_withInvalidToken_delegatesExceptionsAndDoesNotCreateSession() {
             String token = "expired-token";
             when(magicLinkService.validateAndConsumeToken(token, MagicLinkPurpose.EMAIL_VERIFICATION))
                     .thenThrow(new InvalidTokenException("Invalid token"));
 
-            assertThatThrownBy(() -> authService.verifyRegistrationEmail(token))
+            assertThatThrownBy(() -> authService.verifyRegistrationEmail(token, request))
                     .isInstanceOf(InvalidTokenException.class);
+
+            assertNoSessionCreated();
         }
     }
 
@@ -172,21 +188,22 @@ class AuthServiceTest {
     class Login {
 
         @Test
-        void login_withCorrectCredentialsAndNoTrustedDevice_sends2faAndReturnsEmpty() {
+        void login_withCorrectCredentialsAndNoTrustedDevice_sends2faAndReturnsEmptyAndDoesNotCreateSession() {
             String email = "s1234567@ed.ac.uk";
             String password = "Password123";
             User user = createVerifiedUser(email, password);
 
             when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
 
-            Optional<User> result = authService.login(email, password, null);
+            Optional<UserInfoResponse> result = authService.login(email, password, null, request);
 
             assertThat(result).isEmpty();
             verify(magicLinkService).send2faEmail(eq(email));
+            assertNoSessionCreated();
         }
 
         @Test
-        void login_withCorrectCredentialsAndValidTrustedDevice_returnsUser() {
+        void login_withCorrectCredentialsAndValidTrustedDevice_returnsUserInfoAndCreatesSession() {
             String email = "s1234567@ed.ac.uk";
             String password = "Password123";
             User user = createVerifiedUser(email, password);
@@ -197,34 +214,38 @@ class AuthServiceTest {
             when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
             when(trustedDeviceRepository.findByDeviceTokenAndUserId(TokenHasher.hash("device-token"), user.getId())).thenReturn(Optional.of(device));
 
-            Optional<User> result = authService.login(email, password, "device-token");
+            Optional<UserInfoResponse> result = authService.login(email, password, "device-token", request);
 
             assertThat(result).isPresent();
-            assertThat(result.get().getEmail()).isEqualTo(email);
+            assertThat(result.get().email()).isEqualTo(email);
             verify(magicLinkService, never()).send2faEmail(anyString()); // No 2FA email
+            assertSessionCreatedFor(user);
         }
 
         @Test
-        void login_withWrongPassword_throwsInvalidCredentials() {
+        void login_withWrongPassword_throwsInvalidCredentialsAndDoesNotCreateSession() {
             String email = "s1234567@ed.ac.uk";
             User user = createVerifiedUser(email, "correctPassword");
 
             when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
 
-            assertThatThrownBy(() -> authService.login(email, "wrongPassword", null))
+            assertThatThrownBy(() -> authService.login(email, "wrongPassword", null, request))
                     .isInstanceOf(InvalidCredentialsException.class);
+
+            assertNoSessionCreated();
         }
 
         @Test
-        void login_withNonExistentEmail_throwsInvalidCredentials() {
+        void login_withNonExistentEmail_throwsInvalidCredentialsAndDoesNotCreateSession() {
             when(userRepository.findByEmail("s0000000@ed.ac.uk")).thenReturn(Optional.empty());
 
-            assertThatThrownBy(() -> authService.login("s0000000@ed.ac.uk", "any", null))
+            assertThatThrownBy(() -> authService.login("s0000000@ed.ac.uk", "any", null, request))
                     .isInstanceOf(InvalidCredentialsException.class);
+            assertNoSessionCreated();
         }
 
         @Test
-        void login_withUnverifiedEmail_throwsEmailNotVerified() {
+        void login_withUnverifiedEmail_throwsEmailNotVerifiedAndDoesNotCreateSession() {
             String email = "s1234567@ed.ac.uk";
             String password = "Password123";
             User user = new User(email, passwordEncoder.encode(password));
@@ -232,12 +253,14 @@ class AuthServiceTest {
 
             when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
 
-            assertThatThrownBy(() -> authService.login(email, password, null))
+            assertThatThrownBy(() -> authService.login(email, password, null, request))
                     .isInstanceOf(EmailNotVerifiedException.class);
+
+            assertNoSessionCreated();
         }
 
         @Test
-        void login_withExpiredTrustedDevice_sends2fa() {
+        void login_withExpiredTrustedDevice_sends2faAndDoesNotCreateSession() {
             String email = "s1234567@ed.ac.uk";
             String password = "Password123";
             User user = createVerifiedUser(email, password);
@@ -248,10 +271,11 @@ class AuthServiceTest {
             when(userRepository.findByEmail(email)).thenReturn(Optional.of(user));
             when(trustedDeviceRepository.findByDeviceTokenAndUserId(TokenHasher.hash("expired-device"), user.getId())).thenReturn(Optional.of(expired));
 
-            Optional<User> result = authService.login(email, password, "expired-device");
+            Optional<UserInfoResponse> result = authService.login(email, password, "expired-device", request);
 
             assertThat(result).isEmpty();
             verify(magicLinkService).send2faEmail(eq(email));
+            assertNoSessionCreated();
         }
     }
 
@@ -261,17 +285,31 @@ class AuthServiceTest {
     class Verify2fa {
 
         @Test
-        void verify2fa_withValidToken_returnsUser() {
+        void verify2fa_withValidToken_returnsUserInfoAndCreatesSession() {
             String token = "valid-token";
             String email = "s1234567@ed.ac.uk";
             User user = createVerifiedUser(email, "Password123");
+            ReflectionTestUtils.setField(user, "id", UUID.randomUUID());
 
             when(magicLinkService.validateAndConsumeToken(token, MagicLinkPurpose.LOGIN_2FA))
                     .thenReturn(user);
 
-            User result = authService.verify2fa(token);
+            UserInfoResponse result = authService.verify2fa(token, request);
 
-            assertThat(result.getEmail()).isEqualTo(email);
+            assertThat(result.email()).isEqualTo(email);
+            assertSessionCreatedFor(user);
+        }
+
+        @Test
+        void verify2fa_withInvalidToken_throwsAndDoesNotCreateSession() {
+            String token = "bad-token";
+            when(magicLinkService.validateAndConsumeToken(token, MagicLinkPurpose.LOGIN_2FA))
+                    .thenThrow(new InvalidTokenException("Invalid token"));
+
+            assertThatThrownBy(() -> authService.verify2fa(token, request))
+                    .isInstanceOf(InvalidTokenException.class);
+
+            assertNoSessionCreated();
         }
     }
 
@@ -329,6 +367,63 @@ class AuthServiceTest {
         }
     }
 
+    // ── Logout ────────────────────────────────────────────────────────────────
+
+    @Nested
+    class Logout {
+
+        @Test
+        void logout_withExistingSession_invalidatesSessionAndClearsContext() {
+            MockHttpSession session = new MockHttpSession();
+            request.setSession(session);
+            SecurityContextHolder.setContext(SecurityContextHolder.createEmptyContext());
+
+            authService.logout(request);
+
+            assertThat(session.isInvalid()).isTrue();
+            assertThat(SecurityContextHolder.getContext().getAuthentication()).isNull();
+        }
+
+        @Test
+        void logout_withoutSession_doesNotThrowOrCreateSession() {
+            authService.logout(request);
+
+            assertThat(request.getSession(false)).isNull();
+        }
+    }
+
+    // ── User Management ──────────────────────────────────────────────────────
+
+    @Nested
+    class UpdateProfile {
+
+        @Test
+        void updateProfile_withExistingUser_savesNamesAndReturnsUserInfo() {
+            UUID id = UUID.randomUUID();
+            User user = createVerifiedUser("s1234567@ed.ac.uk", "Password123");
+            ReflectionTestUtils.setField(user, "id", id);
+            when(userRepository.findById(id)).thenReturn(Optional.of(user));
+
+            UserInfoResponse result = authService.updateProfile(id, "John", "Doe");
+
+            assertThat(result.id()).isEqualTo(id);
+            assertThat(result.firstName()).isEqualTo("John");
+            assertThat(result.lastName()).isEqualTo("Doe");
+            verify(userRepository).save(user);
+        }
+
+        @Test
+        void updateProfile_withUnknownUser_throwsIllegalArgumentAndSavesNothing() {
+            UUID id = UUID.randomUUID();
+            when(userRepository.findById(id)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> authService.updateProfile(id, "John", "Doe"))
+                    .isInstanceOf(IllegalArgumentException.class);
+
+            verify(userRepository, never()).save(any());
+        }
+    }
+
     // ── Trusted Devices ──────────────────────────────────────────────────────
 
     @Nested
@@ -340,6 +435,7 @@ class AuthServiceTest {
         void setUpUser() {
             user = createVerifiedUser("s1234567@ed.ac.uk", "Password123");
             ReflectionTestUtils.setField(user, "id", UUID.randomUUID());
+            when(trustedDeviceRepository.save(any(TrustedDevice.class))).thenAnswer(inv -> inv.getArgument(0));
         }
 
         @Test
@@ -393,9 +489,9 @@ class AuthServiceTest {
         @Test
         void createTrustedDevice_withTokenKnownToAnotherUser_reusesRawTokenAcrossUsers() {
             // A raw device-token cookie that is already known in the system (because 
-            // it belongs to a different user's trusted device) is currently reused 
-            // as-is and attached to this user too — the same raw cookie value then 
-            // bypasses 2FA for both accounts.
+            // it belongs to a different user's trusted device) is reused as-is and 
+            // attached to this user too - the same raw cookie value then bypasses 2FA 
+            // for both accounts.
             String sharedRawToken = "another-users-cookie-value";
 
             when(trustedDeviceRepository.existsByDeviceToken(TokenHasher.hash(sharedRawToken))).thenReturn(true);
@@ -414,6 +510,21 @@ class AuthServiceTest {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private void assertSessionCreatedFor(User user) {
+        MockHttpSession session = (MockHttpSession) request.getSession(false);
+        assertThat(session).isNotNull();
+        SecurityContext context = (SecurityContext) session.getAttribute(
+                HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY);
+        assertThat(context).isNotNull();
+        assertThat(context.getAuthentication().getName()).isEqualTo(user.getId().toString());
+        assertThat(context.getAuthentication().getAuthorities())
+                .extracting(Object::toString).containsExactly("ROLE_USER");
+    }
+
+    private void assertNoSessionCreated() {
+        assertThat(request.getSession(false)).isNull();
+    }
 
     private User createVerifiedUser(String email, String rawPassword) {
         User user = new User(email, passwordEncoder.encode(rawPassword));

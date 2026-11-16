@@ -11,7 +11,6 @@ import com.coursewise.config.AppConfigProperties;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,12 +18,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseCookie;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
-import org.springframework.security.core.context.SecurityContext;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -33,7 +27,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Arrays;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -97,9 +90,8 @@ public class AuthController {
             @Valid @RequestBody VerifyEmailRequest request,
             HttpServletRequest httpServletRequest) {
         log.info("Received email verification request");
-        User user = authService.verifyRegistrationEmail(request.token());
-        createSession(user, httpServletRequest);
-        return ResponseEntity.ok(UserInfoResponse.from(user));
+        UserInfoResponse userInfo = authService.verifyRegistrationEmail(request.token(), httpServletRequest);
+        return ResponseEntity.ok(userInfo);
     }
 
     // ── Resend Verification ───────────────────────────────────────────────────
@@ -141,25 +133,18 @@ public class AuthController {
         log.info("Received login request");
 
         String deviceToken = extractTrustedDeviceCookie(httpServletRequest);
-
-        Optional<User> authenticatedUser = authService.login(
+        Optional<UserInfoResponse> authenticatedUserInfo = authService.login(
                 request.email().toLowerCase(),
                 request.password(),
-                deviceToken
+                deviceToken,
+                httpServletRequest
         );
 
-        if (authenticatedUser.isPresent()) {
-            // Trusted device bypass — create session immediately
-            User user = authenticatedUser.get();
-            createSession(user, httpServletRequest);
-
-            UserInfoResponse userInfo = UserInfoResponse.from(user);
-            log.info("Login successful via trusted device");
-            return ResponseEntity.ok(LoginResponse.authenticated(userInfo));
+        // login successful via trusted device
+        if (authenticatedUserInfo.isPresent()) {
+            return ResponseEntity.ok(LoginResponse.authenticated(authenticatedUserInfo.get()));
         }
 
-        // 2FA required — email has been sent by the service
-        log.info("2FA required, magic link sent");
         return ResponseEntity.ok(LoginResponse.twoFactorRequired());
     }
 
@@ -179,14 +164,7 @@ public class AuthController {
             @Valid @RequestBody VerifyEmailRequest request,
             HttpServletRequest httpServletRequest) {
         log.info("Received 2FA verification request");
-
-        User user = authService.verify2fa(request.token());
-
-        // Create session
-        createSession(user, httpServletRequest);
-
-        UserInfoResponse userInfo = UserInfoResponse.from(user);
-        log.info("2FA verification successful, session created");
+        UserInfoResponse userInfo = authService.verify2fa(request.token(), httpServletRequest);
         return ResponseEntity.ok(userInfo);
     }
 
@@ -200,6 +178,7 @@ public class AuthController {
      */
     @GetMapping("/me")
     public ResponseEntity<UserInfoResponse> getCurrentUser(Authentication authentication) {
+        log.info("Received request for user info");
         String userId = authentication.getName();
         User user = authService.getUser(UUID.fromString(userId));
         return ResponseEntity.ok(UserInfoResponse.from(user));
@@ -210,9 +189,10 @@ public class AuthController {
      */
     @PatchMapping("/profile")
     public ResponseEntity<UserInfoResponse> updateProfile(@Valid @RequestBody UpdateProfileRequest request, Authentication authentication) {
+        log.info("Received update profile request");
         String userId = authentication.getName();
-        User user = authService.updateProfile(UUID.fromString(userId), request.firstName(), request.lastName());
-        return ResponseEntity.ok(UserInfoResponse.from(user));
+        UserInfoResponse userInfo = authService.updateProfile(UUID.fromString(userId), request.firstName(), request.lastName());
+        return ResponseEntity.ok(userInfo);
     }
 
     /**
@@ -240,7 +220,6 @@ public class AuthController {
                 .sameSite("Strict")
                 .build();
         httpServletResponse.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
-        log.info("Trusted device cookie set via /trust-device endpoint");
 
         return ResponseEntity.ok().build();
     }
@@ -256,12 +235,9 @@ public class AuthController {
      * @return An empty successful response
      */
     @PostMapping("/logout")
-    public ResponseEntity<Void> logout(HttpServletRequest request, HttpServletResponse response) {
-        HttpSession session = request.getSession(false);
-        if (session != null) {
-            session.invalidate();
-        }
-        SecurityContextHolder.clearContext();
+    public ResponseEntity<Void> logout(HttpServletRequest httpServletRequest, HttpServletResponse httpServletResponse) {
+        log.info("Received logout request");
+        authService.logout(httpServletRequest);
 
         ResponseCookie cookie = ResponseCookie.from(SESSION_COOKIE, "")
                 .httpOnly(true)
@@ -270,27 +246,12 @@ public class AuthController {
                 .maxAge(0)
                 .sameSite("Strict")
                 .build();
-        response.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
+        httpServletResponse.addHeader(HttpHeaders.SET_COOKIE, cookie.toString());
 
         return ResponseEntity.ok().build();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private void createSession(User user, HttpServletRequest httpServletRequest) {
-        UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                user.getId().toString(),
-                null,
-                List.of(new SimpleGrantedAuthority("ROLE_USER"))
-        );
-
-        SecurityContext context = SecurityContextHolder.createEmptyContext();
-        context.setAuthentication(authentication);
-        SecurityContextHolder.setContext(context);
-
-        HttpSession session = httpServletRequest.getSession(true);
-        session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, context);
-    }
 
     private String extractTrustedDeviceCookie(HttpServletRequest request) {
         if (request.getCookies() == null) {
@@ -302,5 +263,4 @@ public class AuthController {
                 .findFirst()
                 .orElse(null);
     }
-
 }
