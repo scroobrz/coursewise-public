@@ -6,6 +6,7 @@ import org.springframework.test.web.servlet.client.EntityExchangeResult;
 
 import java.util.List;
 import java.util.Random;
+import java.util.UUID;
 
 /**
  * Shared test-data generators and response helpers used across integration tests.
@@ -17,6 +18,10 @@ public final class TestFixtures {
 
     public static String uniqueEdinburghEmail() {
         return "s" + (1000000 + new Random().nextInt(9000000)) + "@ed.ac.uk";
+    }
+
+    public static String uniqueCourseCode(String prefix) {
+        return prefix + UUID.randomUUID().toString().substring(0, 8);
     }
 
     public static String extractCookie(ResponseEntity<?> response, String cookieName) {
