@@ -30,12 +30,18 @@ public class ReviewService {
     private final CourseRepository courseRepository;
 
     public List<ReviewResponse> getReviewsForCourse(String courseCode) {
+        if (!courseRepository.existsById(courseCode)) {
+            throw new CourseNotFoundException(courseCode);
+        }
         List<Review> reviews = reviewRepository.findByCourse_CodeOrderByCreatedAtDesc(courseCode);
         log.info("Fetched {} reviews for course: {}", reviews.size(), courseCode);
         return reviews.stream().map(ReviewResponse::fromEntity).toList();
     }
 
     public ReviewSummaryResponse getSummaryForCourse(String courseCode) {
+        if (!courseRepository.existsById(courseCode)) {
+            throw new CourseNotFoundException(courseCode);
+        }
         List<Review> reviews = reviewRepository.findByCourse_CodeOrderByCreatedAtDesc(courseCode);
         if (reviews.isEmpty()) {
             return new ReviewSummaryResponse(0, null, null, null, null, null);
