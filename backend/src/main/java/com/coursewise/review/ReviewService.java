@@ -14,6 +14,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 import java.util.UUID;
 
@@ -38,6 +40,7 @@ public class ReviewService {
         if (reviews.isEmpty()) {
             return new ReviewSummaryResponse(0, null, null, null, null, null);
         }
+        
         double avgWorkload   = reviews.stream().mapToInt(Review::getWorkloadRating).average().orElse(0);
         double avgDifficulty = reviews.stream().mapToInt(Review::getDifficultyRating).average().orElse(0);
         double avgEnjoyment  = reviews.stream().mapToInt(Review::getEnjoymentRating).average().orElse(0);
@@ -45,7 +48,8 @@ public class ReviewService {
         double recommendPct  = reviews.stream().filter(r -> Boolean.TRUE.equals(r.getWouldRecommend())).count() * 100.0 / reviews.size();
 
         log.info("Computed review summary for course {}", courseCode);
-        return new ReviewSummaryResponse(reviews.size(), avgWorkload, avgDifficulty, avgEnjoyment, avgLecturer, recommendPct);
+        return new ReviewSummaryResponse(reviews.size(), roundTo2dp(avgWorkload), roundTo2dp(avgDifficulty),
+                roundTo2dp(avgEnjoyment), roundTo2dp(avgLecturer), roundTo2dp(recommendPct));
     }
 
     @Transactional
@@ -80,5 +84,11 @@ public class ReviewService {
                 .orElseThrow(() -> new ReviewNotFoundException(userId, courseCode));
         reviewRepository.delete(review);
         log.info("Deleted review {} for user {} and course {}", review.getId(), userId, courseCode);
+    }
+
+    // Internal Helpers
+
+    private static double roundTo2dp(double value) {
+        return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).doubleValue();
     }
 }
