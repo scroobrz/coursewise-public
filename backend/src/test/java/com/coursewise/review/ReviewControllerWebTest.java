@@ -5,6 +5,7 @@ import com.coursewise.course.exception.CourseNotFoundException;
 import com.coursewise.review.dto.ReviewRequest;
 import com.coursewise.review.dto.ReviewResponse;
 import com.coursewise.review.dto.ReviewSummaryResponse;
+import com.coursewise.review.exception.ReviewNotFoundException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -216,9 +217,20 @@ class ReviewControllerWebTest {
             verify(reviewService).deleteReview(userId, "INFR11159");
         }
 
-        @Test
-        void deleteReview_withUnknownCourse_returnsNotFound() throws Exception {
-            doThrow(new CourseNotFoundException("NOTFOUND"))
+        @Test 
+        void deletereview_whenNoReview_returnsNotFound() throws Exception {
+            doThrow(new ReviewNotFoundException(userId, "INFR11159"))
+                    .when(reviewService).deleteReview(eq(userId), eq("INFR11159"));
+
+            mockMvc.perform(delete("/api/v1/courses/INFR11159/reviews").principal(principal))
+                    .andExpect(status().isNotFound())
+                    .andExpect(jsonPath("$.title").value("Review Not Found"))
+                    .andExpect(jsonPath("$.status").value(404));
+        }
+
+        @Test 
+        void deletereview_withUnknownCourse_returnsNotFound() throws Exception {
+            doThrow(new CourseNotFoundException( "NOTFOUND"))
                     .when(reviewService).deleteReview(eq(userId), eq("NOTFOUND"));
 
             mockMvc.perform(delete("/api/v1/courses/NOTFOUND/reviews").principal(principal))

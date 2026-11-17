@@ -86,6 +86,10 @@ public class ReviewService {
 
     @Transactional
     public void deleteReview(UUID userId, String courseCode) {
+        if (!courseRepository.existsById(courseCode)) {
+            throw new CourseNotFoundException(courseCode);
+        }
+        
         Review review = reviewRepository.findByUserIdAndCourse_Code(userId, courseCode)
                 .orElseThrow(() -> new ReviewNotFoundException(userId, courseCode));
         reviewRepository.delete(review);
