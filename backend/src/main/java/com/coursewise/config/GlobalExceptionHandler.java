@@ -6,6 +6,7 @@ import com.coursewise.auth.exception.InvalidCredentialsException;
 import com.coursewise.auth.exception.InvalidTokenException;
 import com.coursewise.auth.exception.ResendTooSoonException;
 import com.coursewise.course.exception.CourseNotFoundException;
+import com.coursewise.review.exception.ReviewNotFoundException;
 
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
@@ -57,6 +58,22 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
         problem.setType(URI.create("https://coursewise.app/errors/not-found"));
         problem.setTitle("Course Not Found");
+        return problem;
+    }
+
+    /**
+     * Handles requests to delete a review that does not exist.
+     * Returns 404 Not Found.
+     *
+     * @param ex The review-not-found exception
+     * @return a {@link ProblemDetail} with status 404
+     */
+    @ExceptionHandler(ReviewNotFoundException.class)
+    public ProblemDetail handleReviewNotFound(ReviewNotFoundException ex) {
+        log.warn("Review not found: {}", ex.getMessage());
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, ex.getMessage());
+        problem.setType(URI.create("https://coursewise.app/errors/not-found"));
+        problem.setTitle("Review Not Found");
         return problem;
     }
 
