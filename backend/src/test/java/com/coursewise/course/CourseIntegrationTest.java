@@ -49,7 +49,7 @@ class CourseIntegrationTest {
     class ListCourses {
 
         @Test
-        void listCourses_returnsAllCourses() {
+        void listCourses_returnsAllCourseResponses() {
             insertCourses(List.of(
                 course("INFR10069", "Informatics 1"),
                 course("INFR10070", "Informatics 2"),
@@ -72,7 +72,7 @@ class CourseIntegrationTest {
         }
 
         @Test
-        void listCourses_returnsAllCoursesSortedByCode_regardlessOfInsertionOrder() {
+        void listCourses_returnsAllCourseResponsesSortedByCode_regardlessOfInsertionOrder() {
             insertCourse("MATH08057", "Linear Algebra");
             insertCourse("INFR10069", "Informatics 1");
             insertCourse("INFR11159", "Algorithms and Data Structures");
@@ -113,7 +113,7 @@ class CourseIntegrationTest {
     class GetCourse {
 
         @Test
-        void getCourse_withKnownCode_returns200WithCourse() {
+        void getCourse_withKnownCode_returns200WithCourseResponse() {
             insertCourse("INFR10069", "Informatics 1");
 
             restTestClient.get().uri("/api/v1/courses/" + "INFR10069")
@@ -126,7 +126,7 @@ class CourseIntegrationTest {
 
         @ParameterizedTest
         @ValueSource(strings = {"INFR10069", "infr10069", "Infr10069"})
-        void getCourse_withAnyLetterCase_returnsTheStoredCourse(String code) {
+        void getCourse_withAnyLetterCase_returnsTheStoredCourseResponse(String code) {
             insertCourse("INFR10069", "Informatics 1");
 
             restTestClient.get().uri("/api/v1/courses/" + code)
