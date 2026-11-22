@@ -3,6 +3,7 @@ package com.coursewise.review;
 import com.coursewise.TestFixtures;
 import com.coursewise.auth.User;
 import com.coursewise.auth.UserRepository;
+import com.coursewise.auth.exception.UserNotFoundException;
 import com.coursewise.course.Course;
 import com.coursewise.course.CourseRepository;
 import com.coursewise.course.exception.CourseNotFoundException;
@@ -104,7 +105,7 @@ class ReviewServiceTest {
                     .isInstanceOf(CourseNotFoundException.class)
                     .hasMessageContaining("NOTFOUND");
 
-            verifyNoInteractions(reviewRepository);
+            verifyNoInteractions(userRepository, reviewRepository);
         }
     }
 
@@ -277,13 +278,13 @@ class ReviewServiceTest {
         }
 
         @Test
-        void upsertReview_withUnknownUser_throwsIllegalStateAndSavesNothing() {
+        void upsertReview_withUnknownUser_throwsUserNotFoundAndSavesNothing() {
             ReviewRequest request = new ReviewRequest(4, 3, 5, 4, true, "Great!");
             when(courseRepository.existsById(COURSE_CODE)).thenReturn(true);
             when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> reviewService.upsertReview(USER_ID, COURSE_CODE, request))
-                    .isInstanceOf(IllegalStateException.class)
+                    .isInstanceOf(UserNotFoundException.class)
                     .hasMessageContaining(USER_ID.toString());
 
             verify(reviewRepository, never()).save(any());
@@ -296,6 +297,8 @@ class ReviewServiceTest {
         @Test
         void deleteReview_withExistingReview_deletesIt() {
             Review existing = persistedReview(USER, 4, 3, 5, 4, true, "Great!");
+            when(courseRepository.existsById(COURSE_CODE)).thenReturn(true);
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.of(USER));
             when(reviewRepository.findByUserIdAndCourse_Code(USER_ID, COURSE_CODE)).thenReturn(Optional.of(existing));
 
             reviewService.deleteReview(USER_ID, COURSE_CODE);
@@ -304,7 +307,32 @@ class ReviewServiceTest {
         }
 
         @Test
+        void deleteReview_withUnknownCourse_throwsCourseNotFoundWithoutQueryingReviews() {
+            when(courseRepository.existsById("NOTFOUND")).thenReturn(false);
+
+            assertThatThrownBy(() -> reviewService.deleteReview(USER_ID, "NOTFOUND"))
+                    .isInstanceOf(CourseNotFoundException.class)
+                    .hasMessageContaining("NOTFOUND");
+
+            verifyNoInteractions(reviewRepository);
+        }
+
+        @Test
+        void deleteReview_withUnknownUser_throwsUserNotFoundAndDeletesNothing() {
+            when(courseRepository.existsById(COURSE_CODE)).thenReturn(true);
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> reviewService.deleteReview(USER_ID, COURSE_CODE))
+                    .isInstanceOf(UserNotFoundException.class)
+                    .hasMessageContaining(USER_ID.toString());
+
+            verifyNoInteractions(reviewRepository);
+        }
+
+        @Test
         void deleteReview_withNoReview_throwsReviewNotFoundAndDeletesNothing() {
+            when(courseRepository.existsById(COURSE_CODE)).thenReturn(true);
+            when(userRepository.findById(USER_ID)).thenReturn(Optional.of(USER));
             when(reviewRepository.findByUserIdAndCourse_Code(USER_ID, COURSE_CODE)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> reviewService.deleteReview(USER_ID, COURSE_CODE))

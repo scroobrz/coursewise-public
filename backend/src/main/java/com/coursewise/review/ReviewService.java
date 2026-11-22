@@ -2,6 +2,7 @@ package com.coursewise.review;
 
 import com.coursewise.auth.User;
 import com.coursewise.auth.UserRepository;
+import com.coursewise.auth.exception.UserNotFoundException;
 import com.coursewise.course.exception.CourseNotFoundException;
 import com.coursewise.course.CourseRepository;
 import com.coursewise.review.dto.ReviewRequest;
@@ -65,7 +66,7 @@ public class ReviewService {
         }
 
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new IllegalStateException("Authenticated user not found: " + userId));
+                .orElseThrow(() -> new UserNotFoundException(userId));
 
         Review review = reviewRepository.findByUserIdAndCourse_Code(userId, courseCode)
                 .orElseGet(() -> new Review(user, courseRepository.getReferenceById(courseCode),
@@ -89,6 +90,9 @@ public class ReviewService {
         if (!courseRepository.existsById(courseCode)) {
             throw new CourseNotFoundException(courseCode);
         }
+
+        userRepository.findById(userId)
+            .orElseThrow(() -> new UserNotFoundException(userId));
         
         Review review = reviewRepository.findByUserIdAndCourse_Code(userId, courseCode)
                 .orElseThrow(() -> new ReviewNotFoundException(userId, courseCode));

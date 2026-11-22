@@ -27,11 +27,8 @@ import com.coursewise.TestcontainersConfiguration;
 @TestPropertySource(properties = "management.health.mail.enabled=false")
 class CourseIntegrationTest {
 
-    @Autowired
-    private RestTestClient restTestClient;
-
-    @Autowired
-    private JdbcTemplate jdbcTemplate;
+    @Autowired private RestTestClient restTestClient;
+    @Autowired private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void cleanup() {
