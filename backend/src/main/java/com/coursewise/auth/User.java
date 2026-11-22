@@ -93,11 +93,15 @@ public class User {
     }
 
     /**
-     * Updates the user's profile names.
+     * Updates the user's profile names. A null argument leaves the corresponding name unchanged.
      */
     public void setProfileNames(String firstName, String lastName) {
-        this.firstName = firstName;
-        this.lastName = lastName;
+        if (firstName != null) {
+            this.firstName = firstName;
+        }
+        if (lastName != null) {
+            this.lastName = lastName;
+        }
     }
 
     /**

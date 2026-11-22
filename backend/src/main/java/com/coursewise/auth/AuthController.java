@@ -99,11 +99,15 @@ public class AuthController {
     /**
      * Resends a verification email for an unverified account.
      * <p>
-     * Always returns 200 OK regardless of whether the email exists or was
-     * already verified, to prevent email enumeration attacks.
+     * Unless the given email is invalid, or this request comes before 
+     * the resend cooldown period has elapsed, this endpoint always 
+     * returns 200 OK regardless of whether the email exists or 
+     * was already verified, to prevent email enumeration attacks.
      *
      * @param request The request containing the email address
-     * @return 200 OK always
+     * @return 400 if the given email address is invalid, 429 
+     * if the request is within its resend cooldown period, 
+     * 200 otherwise.
      */
     @PostMapping("/resend-verification")
     public ResponseEntity<Void> resendVerification(
@@ -257,6 +261,7 @@ public class AuthController {
         if (request.getCookies() == null) {
             return null;
         }
+        
         return Arrays.stream(request.getCookies())
                 .filter(c -> TRUSTED_DEVICE_COOKIE.equals(c.getName()))
                 .map(Cookie::getValue)

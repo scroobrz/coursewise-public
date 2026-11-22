@@ -5,6 +5,7 @@ import com.coursewise.auth.exception.EmailNotVerifiedException;
 import com.coursewise.auth.exception.InvalidCredentialsException;
 import com.coursewise.auth.exception.InvalidTokenException;
 import com.coursewise.auth.exception.ResendTooSoonException;
+import com.coursewise.auth.exception.UserNotFoundException;
 import com.coursewise.course.exception.CourseNotFoundException;
 import com.coursewise.review.exception.ReviewNotFoundException;
 
@@ -126,6 +127,19 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         log.warn("Invalid login credentials");
         ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, ex.getMessage());
         problem.setType(URI.create("https://coursewise.app/errors/invalid-credentials"));
+        problem.setTitle("Authentication Failed");
+        return problem;
+    }
+
+    /**
+     * Handles a valid session whose user no longer exists (stale session).
+     * Returns 401 Unauthorized so the client treats the session as invalid.
+     */
+    @ExceptionHandler(UserNotFoundException.class)
+    public ProblemDetail handleUserNotFound(UserNotFoundException ex) {
+        log.warn("Session refers to a user that no longer exists");
+        ProblemDetail problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNAUTHORIZED, "Session is no longer valid");
+        problem.setType(URI.create("https://coursewise.app/errors/user-not-found"));
         problem.setTitle("Authentication Failed");
         return problem;
     }

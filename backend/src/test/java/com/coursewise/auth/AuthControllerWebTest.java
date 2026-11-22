@@ -11,6 +11,7 @@ import com.coursewise.auth.exception.EmailNotVerifiedException;
 import com.coursewise.auth.exception.InvalidCredentialsException;
 import com.coursewise.auth.exception.InvalidTokenException;
 import com.coursewise.auth.exception.ResendTooSoonException;
+import com.coursewise.auth.exception.UserNotFoundException;
 import com.coursewise.auth.validation.EmailValidator;
 import com.coursewise.auth.validation.PasswordValidator;
 import com.coursewise.config.AppConfigController;
@@ -25,6 +26,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EmptySource;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -40,6 +45,7 @@ import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.springframework.test.context.web.WebAppConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -48,11 +54,14 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
@@ -125,7 +134,7 @@ class AuthControllerWebTest {
 
 
     @Nested
-    class ConfigEndpoint {
+    class Config {
 
         @Test
         void getConfig_returnsPublicConfigWithoutBackendOnlyFields() throws Exception {
@@ -147,36 +156,75 @@ class AuthControllerWebTest {
     }
 
     @Nested
-    class RegisterEndpoint {
+    class Register {
 
         @Test
         void register_withValidInput_returns201() throws Exception {
-            RegisterRequest request = new RegisterRequest("s1234567@ed.ac.uk", "securePassword123");
+            String email = "s1234567@ed.ac.uk";
+            String password = "securePassword123";
+            RegisterRequest request = new RegisterRequest(email, password);
 
             mockMvc.perform(post("/api/v1/auth/register").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isCreated());
+
+            verify(authService).register(email, password);
         }
 
-        @Test
-        void register_withInvalidEmail_returns400() throws Exception {
-            RegisterRequest request = new RegisterRequest("not-an-email", "securePassword123");
+        @ParameterizedTest()
+        @NullAndEmptySource
+        @ValueSource(strings = {
+                "   ",                       // blank
+                "not-an-email",              // no @ or domain
+                "s1234567@",                 // no domain
+                "s1234567@ed.ac.uk.evil.com",// domain with suffix appended
+                "s1234567@gmail.com",        // wrong domain
+                "s1234567@ac.uk",            // truncated domain
+                "s1234567@ED.AC.UK",         // capitalised domain
+                "s123456@ed.ac.uk",          // 6 digits (too few)
+                "s12345678@ed.ac.uk",        // 8 digits (too many)
+                "sabcdefg@ed.ac.uk",         // non-digit id
+                "x1234567@ed.ac.uk",         // wrong prefix letter
+                "1234567@ed.ac.uk",          // missing prefix letter
+                " s1234567@ed.ac.uk",        // leading whitespace
+                "s1234567@ed.ac.uk ",        // trailing whitespace
+                "s1234567@ed.ac.uk\n"        // trailing newline
+        })
+        void register_withInvalidEmail_returns400(String invalidEmail) throws Exception {
+            RegisterRequest request = new RegisterRequest(invalidEmail, "securePassword123");
 
             mockMvc.perform(post("/api/v1/auth/register").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isBadRequest());
+
+            verifyNoInteractions(authService);
         }
 
-        @Test
-        void register_withShortPassword_returns400() throws Exception {
-            RegisterRequest request = new RegisterRequest("s1234567@ed.ac.uk", "short");
+        @ParameterizedTest()
+        @NullAndEmptySource
+        @ValueSource(strings = {
+                "        ",     // blank
+                "Pass1",        // too short
+                "Passwo1",      // 7 chars: just below min (8)
+                "ThisIsMyPasswordAndItIsWaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaayyyyyyyyyyyyyyyyyyTooLong123",
+                "WhereasThisPasswordIsOnlyJuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuustTooLong123", // 129 chars - just over the max (128)
+                "password123",  // no uppercase
+                "PasswordOnly", // no non-alphabetic character
+                "PASSWORDONLY", // uppercase only, no non-alphabetic
+                "12345678",     // no uppercase
+                "!!!!!!!!"      // no uppercase
+        })
+        void register_withInvalidPassword_returns400(String invalidPassword) throws Exception {
+            RegisterRequest request = new RegisterRequest("s1234567@ed.ac.uk", invalidPassword);
 
             mockMvc.perform(post("/api/v1/auth/register").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isBadRequest());
+
+            verifyNoInteractions(authService);
         }
 
         @Test
@@ -193,7 +241,7 @@ class AuthControllerWebTest {
     }
 
     @Nested
-    class VerifyEmailEndpoint {
+    class VerifyEmail {
 
         @Test
         void verifyEmail_withValidToken_returns200() throws Exception {
@@ -225,7 +273,7 @@ class AuthControllerWebTest {
     }
 
     @Nested
-    class LoginEndpoint {
+    class Login {
 
         @Test
         void login_with2faRequired_returns200WithStatus() throws Exception {
@@ -270,6 +318,36 @@ class AuthControllerWebTest {
                     .andExpect(status().isUnauthorized());
         }
 
+        @ParameterizedTest()
+        @NullAndEmptySource
+        @ValueSource(strings = {
+                "   ",                       // blank
+                "not-an-email",              // no @ or domain
+                "s1234567@",                 // no domain
+                "s1234567@ed.ac.uk.evil.com",// domain with suffix appended
+                "s1234567@gmail.com",        // wrong domain
+                "s1234567@ac.uk",            // truncated domain
+                "s1234567@ED.AC.UK",         // capitalised domain
+                "s123456@ed.ac.uk",          // 6 digits (too few)
+                "s12345678@ed.ac.uk",        // 8 digits (too many)
+                "sabcdefg@ed.ac.uk",         // non-digit id
+                "x1234567@ed.ac.uk",         // wrong prefix letter
+                "1234567@ed.ac.uk",          // missing prefix letter
+                " s1234567@ed.ac.uk",        // leading whitespace
+                "s1234567@ed.ac.uk ",        // trailing whitespace
+                "s1234567@ed.ac.uk\n"        // trailing newline
+        })
+        void login_withInvalidEmail_returns400(String invalidEmail) throws Exception {
+            LoginRequest request = new LoginRequest(invalidEmail, "Password123");
+
+            mockMvc.perform(post("/api/v1/auth/login").with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isBadRequest());
+
+            verifyNoInteractions(authService);
+        }
+
         @Test
         void login_withUnverifiedEmail_returns403() throws Exception {
             LoginRequest request = new LoginRequest("s1234567@ed.ac.uk", "Password123");
@@ -284,7 +362,7 @@ class AuthControllerWebTest {
     }
 
     @Nested
-    class Verify2faEndpoint {
+    class Verify2fa {
 
         @Test
         void verify2fa_withValidToken_returns200WithUserInfo() throws Exception {
@@ -316,44 +394,69 @@ class AuthControllerWebTest {
     }
 
     @Nested
-    class ResendVerificationEndpoint {
+    class ResendVerification {
 
         @Test
-        void resendVerification_returns200_always() throws Exception {
-            ResendVerificationRequest request = new ResendVerificationRequest("s1234567@ed.ac.uk");
+        void resendVerification_withValidEmail_returns200() throws Exception {
+            String email = "s1234567@ed.ac.uk";
+            ResendVerificationRequest request = new ResendVerificationRequest(email);
 
             mockMvc.perform(post("/api/v1/auth/resend-verification").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isOk());
+
+            verify(authService).resendVerification(email);
         }
 
-        @Test
-        void resendVerification_withInvalidEmail_returns400() throws Exception {
-            ResendVerificationRequest request = new ResendVerificationRequest("not-an-email");
+        @ParameterizedTest()
+        @NullAndEmptySource
+        @ValueSource(strings = {
+                "   ",                       // blank
+                "not-an-email",              // no @ or domain
+                "s1234567@",                 // no domain
+                "s1234567@ed.ac.uk.evil.com",// domain with suffix appended
+                "s1234567@gmail.com",        // wrong domain
+                "s1234567@ac.uk",            // truncated domain
+                "s1234567@ED.AC.UK",         // capitalised domain
+                "s123456@ed.ac.uk",          // 6 digits (too few)
+                "s12345678@ed.ac.uk",        // 8 digits (too many)
+                "sabcdefg@ed.ac.uk",         // non-digit id
+                "x1234567@ed.ac.uk",         // wrong prefix letter
+                "1234567@ed.ac.uk",          // missing prefix letter
+                " s1234567@ed.ac.uk",        // leading whitespace
+                "s1234567@ed.ac.uk ",        // trailing whitespace
+                "s1234567@ed.ac.uk\n"        // trailing newline
+        })
+        void resendVerification_withInvalidEmail_returns400(String invalidEmail) throws Exception {
+            ResendVerificationRequest request = new ResendVerificationRequest(invalidEmail);
 
             mockMvc.perform(post("/api/v1/auth/resend-verification").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isBadRequest());
+
+            verifyNoInteractions(authService);
         }
 
         @Test
         void resendVerification_whenTooSoon_returns429() throws Exception {
             ResendVerificationRequest request = new ResendVerificationRequest("s1234567@ed.ac.uk");
-            
+
             doThrow(new ResendTooSoonException())
                 .when(authService).resendVerification(anyString());
 
             mockMvc.perform(post("/api/v1/auth/resend-verification").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
-                    .andExpect(status().isTooManyRequests());
+                    .andExpect(status().isTooManyRequests())
+                    .andExpect(jsonPath("$.status").value(429))
+                    .andExpect(jsonPath("$.title").value("Resend Too Soon"));
         }
     }
 
     @Nested
-    class ProtectedEndpoints {
+    class GetUser {
 
         @Test
         void me_whenAuthenticated_returns200WithUserInfo() throws Exception {
@@ -379,10 +482,35 @@ class AuthControllerWebTest {
         void me_whenNotAuthenticated_returns401() throws Exception {
             mockMvc.perform(get("/api/v1/auth/me"))
                     .andExpect(status().isUnauthorized());
+            // This request should be stopped at the security filter chain, and never reach the service layer
+            verifyNoInteractions(authService);
         }
 
         @Test
-        void profile_whenAuthenticated_returns200WithUserInfo() throws Exception {
+        void me_whenSessionUserNoLongerExists_returns401() throws Exception {
+            // Valid session, but the user was deleted since it was created (stale session).
+            MockHttpSession session = new MockHttpSession();
+            SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
+            UUID userId = UUID.randomUUID();
+            securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(userId, null, List.of()));
+            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
+
+            when(authService.getUser(userId))
+                    .thenThrow(new UserNotFoundException(userId));
+
+            mockMvc.perform(get("/api/v1/auth/me").session(session))
+                    .andExpect(status().isUnauthorized());
+            
+            // verify that the 401 status actually came from the service, rather than getting intercepted in the security filter chain
+            verify(authService).getUser(userId);
+        }
+    }
+
+    @Nested 
+    class UpdateProfile {
+
+        @Test
+        void updateProfile_whenAuthenticated_returns200WithUserInfo() throws Exception {
             MockHttpSession session = new MockHttpSession();
             SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
             UUID userId = UUID.randomUUID();
@@ -403,21 +531,78 @@ class AuthControllerWebTest {
                     .andExpect(jsonPath("$.email").value("s1234567@ed.ac.uk"));
         }
 
+        @ParameterizedTest
+        @EmptySource 
+        @ValueSource(strings = {
+                "thisnameiswaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaayyytoolong",
+                "whereasthisnameisonlyjuuuuuuuuuuuuuuuuuuuusttoolong", // 51 chars - just over the max (50)
+                "    ",
+                "\t",
+                "\n"
+        })
+        void updateProfile_withInvalidNames_returns400(String invalidName) throws Exception {
+            MockHttpSession session = new MockHttpSession();
+            SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
+            UUID userId = UUID.randomUUID();
+            securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(userId, null, List.of()));
+            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
+
+            mockMvc.perform(patch("/api/v1/auth/profile")
+                                .session(session)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(new UpdateProfileRequest(invalidName, "Doe")))
+                                .with(csrf()))
+                    .andExpect(status().isBadRequest());
+
+            mockMvc.perform(patch("/api/v1/auth/profile")
+                                .session(session)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content(objectMapper.writeValueAsString(new UpdateProfileRequest("John", invalidName)))
+                                .with(csrf()))
+                    .andExpect(status().isBadRequest());
+
+            verifyNoInteractions(authService);
+        }
+
         @Test
-        void profile_whenNotAuthenticated_returns401() throws Exception {
+        void updateProfile_whenNotAuthenticated_returns401() throws Exception {
             mockMvc.perform(patch("/api/v1/auth/profile").contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(new UpdateProfileRequest("John", "Doe"))).with(csrf()))
                     .andExpect(status().isUnauthorized());
+            // This request should be stopped at the security filter chain, and never reach the service layer
+            verifyNoInteractions(authService);
         }
+
+        @Test
+        void updateProfile_whenSessionUserNoLongerExists_returns401() throws Exception {
+            // Valid session, but the user was deleted since it was created (stale session).
+            MockHttpSession session = new MockHttpSession();
+            SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
+            UUID userId = UUID.randomUUID();
+            securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(userId, null, List.of()));
+            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
+
+            when(authService.updateProfile(eq(userId), any(), any()))
+                    .thenThrow(new UserNotFoundException(userId));
+
+            mockMvc.perform(patch("/api/v1/auth/profile").session(session).contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(new UpdateProfileRequest("John", "Doe"))).with(csrf()))
+                    .andExpect(status().isUnauthorized());
+            
+            // verify that the 401 status actually came from the service, rather than getting intercepted in the security filter chain
+            verify(authService).updateProfile(eq(userId), anyString(), anyString());
+        }
+    }
+
+    @Nested
+    class TrustDevice {
 
         @Test
         void trustDevice_whenAuthenticated_setsCookie() throws Exception {
             MockHttpSession session = new MockHttpSession();
             SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
             UUID userId = UUID.randomUUID();
-            UsernamePasswordAuthenticationToken auth =
-                    new UsernamePasswordAuthenticationToken(userId, null, List.of());
-            securityContext.setAuthentication(auth);
+            securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(userId, null, List.of()));
             session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
 
             User mockUser = new User("s1234567@ed.ac.uk");
@@ -436,7 +621,32 @@ class AuthControllerWebTest {
         void trustDevice_whenNotAuthenticated_returns401() throws Exception {
             mockMvc.perform(post("/api/v1/auth/trust-device").with(csrf()))
                     .andExpect(status().isUnauthorized());
+            // This request should be stopped at the security filter chain, and never reach the service layer
+            verifyNoInteractions(authService);
         }
+
+        @Test
+        void trustDevice_whenSessionUserNoLongerExists_returns401() throws Exception {
+            // Valid session, but the user was deleted since it was created (stale session).
+            MockHttpSession session = new MockHttpSession();
+            SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
+            UUID userId = UUID.randomUUID();
+            securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(userId, null, List.of()));
+            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
+
+            when(authService.getUser(eq(userId)))
+                    .thenThrow(new UserNotFoundException(userId));
+
+            mockMvc.perform(post("/api/v1/auth/trust-device").with(csrf()).session(session))
+                    .andExpect(status().isUnauthorized());
+            
+            // verify that the 401 status actually came from the service, rather than getting intercepted in the security filter chain
+            verify(authService).getUser(userId);
+        }
+    }
+
+    @Nested 
+    class Logout {
 
         @Test
         void logout_delegatesToServiceAndReturns200() throws Exception {
@@ -490,7 +700,7 @@ class AuthControllerWebTest {
         void resendVerification_withoutCsrfToken_returns403() throws Exception {
             ResendVerificationRequest request = new ResendVerificationRequest("s1234567@ed.ac.uk");
 
-            mockMvc.perform(post("/api/v1/auth/resend-verification-email")
+            mockMvc.perform(post("/api/v1/auth/resend-verification")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isForbidden());
@@ -510,7 +720,7 @@ class AuthControllerWebTest {
         void verify2fa_withoutCsrfToken_returns403() throws Exception {
             VerifyEmailRequest request = new VerifyEmailRequest("valid-token");
 
-            mockMvc.perform(post("/api/v1/auth/verify2fa")
+            mockMvc.perform(post("/api/v1/auth/verify-2fa")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isForbidden());

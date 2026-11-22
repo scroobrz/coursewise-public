@@ -6,6 +6,7 @@ import com.coursewise.auth.exception.EmailNotVerifiedException;
 import com.coursewise.auth.exception.InvalidCredentialsException;
 import com.coursewise.auth.exception.InvalidTokenException;
 import com.coursewise.auth.exception.ResendTooSoonException;
+import com.coursewise.auth.exception.UserNotFoundException;
 import com.coursewise.config.AppConfigProperties;
 
 import jakarta.servlet.http.HttpServletRequest;
@@ -294,12 +295,12 @@ public class AuthService {
      *
      * @param id The UUID of the user
      * @return The requested {@link User}
-     * @throws IllegalArgumentException if the user is not found
+     * @throws UserNotFoundException if the user is not found
      */
     @Transactional(readOnly = true)
     public User getUser(UUID id) {
         return userRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("User not found: " + id));
+                .orElseThrow(() -> new UserNotFoundException(id));
     }
 
     /**
@@ -309,11 +310,11 @@ public class AuthService {
      * @param firstName The new first name
      * @param lastName The new last name
      * @return A {@link UserInfoResponse} with the updated user info
-     * @throws IllegalArgumentException if the user is not found
+     * @throws UserNotFoundException if the user is not found
      */
     public UserInfoResponse updateProfile(UUID id, String firstName, String lastName) {
         User user = userRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("User not found: " + id));
+                .orElseThrow(() -> new UserNotFoundException(id));
         user.setProfileNames(firstName, lastName);
         log.info("Profile names updated for user {}", user.getId());
         userRepository.save(user);

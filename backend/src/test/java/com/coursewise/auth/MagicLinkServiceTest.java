@@ -105,7 +105,22 @@ class MagicLinkServiceTest {
     class ResendVerificationEmail {
 
         @Test
-        void resendVerificationEmail_withinCooldown_throwsResendTooSoon() {
+        void resendVerificationEmail_afterCooldownExpired_sendsNewEmail() {
+            String email = "s1234567@ed.ac.uk";
+            MagicLink olderLink = new MagicLink(email, "token", MagicLinkPurpose.EMAIL_VERIFICATION, OffsetDateTime.now().plusMinutes(15));
+            ReflectionTestUtils.setField(olderLink, "createdAt", OffsetDateTime.now().minusSeconds(TEST_RESEND_COOLDOWN_SECS + 5));
+            
+            when(magicLinkRepository.findFirstByEmailOrderByCreatedAtDesc(email)).thenReturn(Optional.of(olderLink));
+            when(magicLinkRepository.save(any(MagicLink.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            magicLinkService.resendVerificationEmail(email);
+
+            verify(magicLinkRepository).save(any(MagicLink.class));
+            verify(mailSender).send(any(SimpleMailMessage.class));
+        }
+
+        @Test
+        void resendVerificationEmail_whenTooSoon_throwsResendTooSoon() {
             String email = "s1234567@ed.ac.uk";
 
             MagicLink recentLink = new MagicLink(email, "token", MagicLinkPurpose.EMAIL_VERIFICATION, OffsetDateTime.now().plusMinutes(15));
@@ -118,43 +133,46 @@ class MagicLinkServiceTest {
 
             verify(mailSender, never()).send(any(SimpleMailMessage.class));
         }
-
-        @Test
-        void resendVerificationEmail_afterCooldownExpired_sendsNewEmail() {
-            String email = "s1234567@ed.ac.uk";
-
-            MagicLink olderLink = new MagicLink(email, "token", MagicLinkPurpose.EMAIL_VERIFICATION, OffsetDateTime.now().plusMinutes(15));
-            // Ensure createdAt is older than 60 seconds
-            ReflectionTestUtils.setField(olderLink, "createdAt", OffsetDateTime.now().minusSeconds(65));
-            when(magicLinkRepository.findFirstByEmailOrderByCreatedAtDesc(email)).thenReturn(Optional.of(olderLink));
-            
-            when(magicLinkRepository.save(any(MagicLink.class))).thenAnswer(inv -> inv.getArgument(0));
-
-            magicLinkService.resendVerificationEmail(email);
-
-            verify(magicLinkRepository).save(any(MagicLink.class));
-            verify(mailSender).send(any(SimpleMailMessage.class));
-        }
     }
 
     @Nested
     class Send2faEmail {
 
         @Test
-        void send2faEmail_generatesLinkAndSendsEmail() {
+        void send2faEmail_generatesLinkInvalidatesOldAndSendsEmail() {
             String email = "s1234567@ed.ac.uk";
 
+            MagicLink oldLink = new MagicLink(email, "old-hash", MagicLinkPurpose.EMAIL_VERIFICATION, OffsetDateTime.now().plusMinutes(5));
+            when(magicLinkRepository.findAllByEmailAndUsedFalse(email)).thenReturn(List.of(oldLink));
             when(magicLinkRepository.save(any(MagicLink.class))).thenAnswer(inv -> inv.getArgument(0));
 
             magicLinkService.send2faEmail(email);
 
             verify(magicLinkRepository).save(any(MagicLink.class));
 
+            // Verify old links are invalidated
+            assertThat(oldLink.isUsed()).isTrue();
+            verify(magicLinkRepository).saveAll(List.of(oldLink));
+
+            // Verify new link is created and saved
+            ArgumentCaptor<MagicLink> linkCaptor = ArgumentCaptor.forClass(MagicLink.class);
+            verify(magicLinkRepository).save(linkCaptor.capture());
+            MagicLink savedLink = linkCaptor.getValue();
+            assertThat(savedLink.getEmail()).isEqualTo(email);
+            assertThat(savedLink.getPurpose()).isEqualTo(MagicLinkPurpose.LOGIN_2FA);
+
+            // Verify email was sent containing the unhashed token, while the DB stored the hashed token
             ArgumentCaptor<SimpleMailMessage> mailCaptor = ArgumentCaptor.forClass(SimpleMailMessage.class);
             verify(mailSender).send(mailCaptor.capture());
             SimpleMailMessage sentEmail = mailCaptor.getValue();
             assertThat(sentEmail.getTo()).containsExactly(email);
+            assertThat(sentEmail.getFrom()).isEqualTo(TEST_CONFIG.fromAddress());
             assertThat(sentEmail.getText()).contains("/auth/verify-2fa?token=");
+
+            // Extract raw token from email and ensure its hash matches the one in DB
+            String emailText = sentEmail.getText();
+            String tokenParam = emailText.substring(emailText.indexOf("?token=") + 7).split("\n")[0].trim();
+            assertThat(savedLink.getToken()).isEqualTo(TokenHasher.hash(tokenParam));
         }
     }
 
@@ -165,7 +183,7 @@ class MagicLinkServiceTest {
         void validate_withValidToken_consumesLinkAndReturnsUser() {
             String rawToken = "raw-token";
             String email = "s1234567@ed.ac.uk";
-            MagicLink link = new MagicLink(email, TokenHasher.hash(rawToken), MagicLinkPurpose.EMAIL_VERIFICATION, OffsetDateTime.now().plusMinutes(5));
+            MagicLink link = new MagicLink(email, TokenHasher.hash(rawToken), MagicLinkPurpose.EMAIL_VERIFICATION, OffsetDateTime.now().plusMinutes(15));
             User user = new User(email, "hashed");
 
             when(magicLinkRepository.findByToken(TokenHasher.hash(rawToken))).thenReturn(Optional.of(link));

@@ -5,8 +5,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.test.web.servlet.client.EntityExchangeResult;
 
 import java.util.List;
-import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Shared test-data generators and response helpers used across integration tests.
@@ -16,8 +16,18 @@ public final class TestFixtures {
     private TestFixtures() {
     }
 
+    // Sequential rather than random: guarantees no two tests in a JVM share an email
+    // (stays 7 digits up to 9,999,999, so it always matches the email regex).
+    private static final AtomicInteger EMAIL_SEQ = new AtomicInteger(1_000_000);
+
     public static String uniqueEdinburghEmail() {
-        return "s" + (1000000 + new Random().nextInt(9000000)) + "@ed.ac.uk";
+        return "s" + EMAIL_SEQ.getAndIncrement() + "@ed.ac.uk";
+    }
+
+    /** All Set-Cookie header values of a response (empty list if none). */
+    public static List<String> setCookies(ResponseEntity<?> response) {
+        List<String> cookies = response.getHeaders().get(HttpHeaders.SET_COOKIE);
+        return cookies == null ? List.of() : cookies;
     }
 
     public static String uniqueCourseCode(String prefix) {

@@ -6,6 +6,7 @@ import com.coursewise.auth.exception.EmailNotVerifiedException;
 import com.coursewise.auth.exception.InvalidCredentialsException;
 import com.coursewise.auth.exception.InvalidTokenException;
 import com.coursewise.auth.exception.ResendTooSoonException;
+import com.coursewise.auth.exception.UserNotFoundException;
 import com.coursewise.config.AppConfigProperties;
 import com.coursewise.config.AppConfigResponse;
 import com.coursewise.config.AppConfigResponse.ValidationProperties;
@@ -28,12 +29,16 @@ import org.springframework.security.web.context.HttpSessionSecurityContextReposi
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -119,6 +124,7 @@ class AuthServiceTest {
                     .isInstanceOf(EmailAlreadyRegisteredException.class);
 
             verify(userRepository, never()).save(any());
+            verifyNoInteractions(magicLinkService);
         }
 
         @Test
@@ -179,6 +185,7 @@ class AuthServiceTest {
                     .isInstanceOf(InvalidTokenException.class);
 
             assertNoSessionCreated();
+            verify(userRepository, never()).save(any());
         }
     }
 
@@ -395,6 +402,30 @@ class AuthServiceTest {
     // ── User Management ──────────────────────────────────────────────────────
 
     @Nested
+    class GetUser {
+
+        @Test
+        void getUser_withExistingUser_returnsIt() {
+            UUID id = UUID.randomUUID();
+            User user = createVerifiedUser("s1234567@ed.ac.uk", "Password123");
+            ReflectionTestUtils.setField(user, "id", id);
+            when(userRepository.findById(id)).thenReturn(Optional.of(user));
+
+            assertThat(authService.getUser(id)).isSameAs(user);
+        }
+
+        @Test
+        void getUser_withUnknownUser_throwsUserNotFound() {
+            UUID id = UUID.randomUUID();
+            when(userRepository.findById(id)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> authService.getUser(id))
+                    .isInstanceOf(UserNotFoundException.class)
+                    .hasMessageContaining(id.toString());
+        }
+    }
+
+    @Nested
     class UpdateProfile {
 
         @Test
@@ -413,12 +444,33 @@ class AuthServiceTest {
         }
 
         @Test
-        void updateProfile_withUnknownUser_throwsIllegalArgumentAndSavesNothing() {
+        void updateProfile_withNullFields_leavesExistingNamesUnchanged() {
+            UUID id = UUID.randomUUID();
+            User user = createVerifiedUser("s1234567@ed.ac.uk", "Password123");
+            ReflectionTestUtils.setField(user, "id", id);
+            user.setProfileNames("John", "Doe");
+            when(userRepository.findById(id)).thenReturn(Optional.of(user));
+
+            UserInfoResponse onlyFirst = authService.updateProfile(id, "Jane", null);
+            assertThat(onlyFirst.firstName()).isEqualTo("Jane");
+            assertThat(onlyFirst.lastName()).isEqualTo("Doe");
+
+            UserInfoResponse onlyLast = authService.updateProfile(id, null, "Smith");
+            assertThat(onlyLast.firstName()).isEqualTo("Jane");
+            assertThat(onlyLast.lastName()).isEqualTo("Smith");
+
+            UserInfoResponse neither = authService.updateProfile(id, null, null);
+            assertThat(neither.firstName()).isEqualTo("Jane");
+            assertThat(neither.lastName()).isEqualTo("Smith");
+        }
+
+        @Test
+        void updateProfile_withUnknownUser_throwsUserNotFoundAndSavesNothing() {
             UUID id = UUID.randomUUID();
             when(userRepository.findById(id)).thenReturn(Optional.empty());
 
             assertThatThrownBy(() -> authService.updateProfile(id, "John", "Doe"))
-                    .isInstanceOf(IllegalArgumentException.class);
+                    .isInstanceOf(UserNotFoundException.class);
 
             verify(userRepository, never()).save(any());
         }
@@ -451,6 +503,7 @@ class AuthServiceTest {
             verify(trustedDeviceRepository).save(captor.capture());
             assertThat(captor.getValue().getUser()).isEqualTo(user);
             assertThat(captor.getValue().getDeviceToken()).isEqualTo(TokenHasher.hash(token));
+            assertExpiresInConfiguredDays(captor.getValue().getExpiresAt());
         }
 
         @Test
@@ -466,6 +519,7 @@ class AuthServiceTest {
             ArgumentCaptor<TrustedDevice> captor = ArgumentCaptor.forClass(TrustedDevice.class);
             verify(trustedDeviceRepository).save(captor.capture());
             assertThat(captor.getValue().getDeviceToken()).isEqualTo(TokenHasher.hash(token));
+            assertExpiresInConfiguredDays(captor.getValue().getExpiresAt());
         }
 
         @Test
@@ -481,17 +535,13 @@ class AuthServiceTest {
             String token = authService.createTrustedDevice(user, "Mozilla/5.0 Chrome/120.0", existingToken);
 
             assertThat(token).isEqualTo(existingToken);
-            assertThat(existingDevice.getExpiresAt()).isAfter(OffsetDateTime.now());
+            assertExpiresInConfiguredDays(existingDevice.getExpiresAt());
             verify(trustedDeviceRepository, times(1)).save(any(TrustedDevice.class));
             verify(trustedDeviceRepository).save(existingDevice);
         }
 
         @Test
-        void createTrustedDevice_withTokenKnownToAnotherUser_reusesRawTokenAcrossUsers() {
-            // A raw device-token cookie that is already known in the system (because 
-            // it belongs to a different user's trusted device) is reused as-is and 
-            // attached to this user too - the same raw cookie value then bypasses 2FA 
-            // for both accounts.
+        void createTrustedDevice_withTokenKnownToAnotherUser_attachesSameTokenToThisUserSeparately() {
             String sharedRawToken = "another-users-cookie-value";
 
             when(trustedDeviceRepository.existsByDeviceToken(TokenHasher.hash(sharedRawToken))).thenReturn(true);
@@ -499,7 +549,6 @@ class AuthServiceTest {
                     .thenReturn(Optional.empty());
 
             String token = authService.createTrustedDevice(user, "Mozilla/5.0 Chrome/120.0", sharedRawToken);
-
             assertThat(token).isEqualTo(sharedRawToken);
 
             ArgumentCaptor<TrustedDevice> captor = ArgumentCaptor.forClass(TrustedDevice.class);
@@ -520,6 +569,11 @@ class AuthServiceTest {
         assertThat(context.getAuthentication().getName()).isEqualTo(user.getId().toString());
         assertThat(context.getAuthentication().getAuthorities())
                 .extracting(Object::toString).containsExactly("ROLE_USER");
+    }
+
+    private void assertExpiresInConfiguredDays(OffsetDateTime expiresAt) {
+        assertThat(expiresAt).isCloseTo(
+                OffsetDateTime.now().plusDays(TEST_TRUSTED_DEVICE_DAYS), within(5, ChronoUnit.SECONDS));
     }
 
     private void assertNoSessionCreated() {

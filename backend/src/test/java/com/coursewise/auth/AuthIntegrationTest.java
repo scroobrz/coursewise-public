@@ -5,11 +5,17 @@ import com.coursewise.TestcontainersConfiguration;
 import com.coursewise.auth.dto.LoginRequest;
 import com.coursewise.auth.dto.LoginResponse;
 import com.coursewise.auth.dto.RegisterRequest;
+import com.coursewise.auth.dto.ResendVerificationRequest;
+import com.coursewise.auth.dto.UpdateProfileRequest;
 import com.coursewise.auth.dto.UserInfoResponse;
 import com.coursewise.auth.dto.VerifyEmailRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EmptySource;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -35,6 +41,7 @@ import java.util.regex.Pattern;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Import(TestcontainersConfiguration.class)
@@ -45,20 +52,11 @@ class AuthIntegrationTest {
     @LocalServerPort
     private int port;
 
-    @Autowired
-    private RestClient.Builder restClientBuilder;
-
-    @Autowired
-    private MagicLinkRepository magicLinkRepository;
-
-    @Autowired
-    private UserRepository userRepository;
-
-    @Autowired
-    private TrustedDeviceRepository trustedDeviceRepository;
-
-    @Autowired
-    private JdbcTemplate jdbcTemplate;
+    @Autowired private RestClient.Builder restClientBuilder;
+    @Autowired private MagicLinkRepository magicLinkRepository;
+    @Autowired private UserRepository userRepository;
+    @Autowired private TrustedDeviceRepository trustedDeviceRepository;
+    @Autowired private JdbcTemplate jdbcTemplate;
 
     @MockitoBean
     private JavaMailSender mailSender;
@@ -90,12 +88,64 @@ class AuthIntegrationTest {
             assertThat(ml.isUsed()).isFalse();
         }
 
+        @ParameterizedTest()
+        @NullAndEmptySource
+        @ValueSource(strings = {
+                "   ",                       // blank
+                "not-an-email",              // no @ or domain
+                "s1234567@",                 // no domain
+                "s1234567@ed.ac.uk.evil.com",// domain with suffix appended
+                "s1234567@gmail.com",        // wrong domain
+                "s1234567@ac.uk",            // truncated domain
+                "s1234567@ED.AC.UK",         // capitalised domain
+                "s123456@ed.ac.uk",          // 6 digits (too few)
+                "s12345678@ed.ac.uk",        // 8 digits (too many)
+                "sabcdefg@ed.ac.uk",         // non-digit id
+                "x1234567@ed.ac.uk",         // wrong prefix letter
+                "1234567@ed.ac.uk",          // missing prefix letter
+                " s1234567@ed.ac.uk",        // leading whitespace
+                "s1234567@ed.ac.uk ",        // trailing whitespace
+                "s1234567@ed.ac.uk\n"        // trailing newline
+        })
+        void register_withInvalidEmail_returns400(String invalidEmail) throws Exception {
+            assertThatThrownBy(() -> registerUser(invalidEmail, "Password123"))
+                    .isInstanceOf(HttpClientErrorException.BadRequest.class);
+
+            assertThat(userRepository.count()).isZero();
+            assertThat(magicLinkRepository.count()).isZero();
+            verifyNoInteractions(mailSender);
+        }
+
+        @ParameterizedTest()
+        @NullAndEmptySource
+        @ValueSource(strings = {
+                "        ",     // blank
+                "Pass1",        // too short
+                "Passwo1",      // 7 chars: just below min (8)
+                "ThisIsMyPasswordAndItIsWaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaayyyyyyyyyyyyyyyyyyTooLong123",
+                "WhereasThisPasswordIsOnlyJuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuustTooLong123", // 129 chars - just over the max (128)
+                "password123",  // no uppercase
+                "PasswordOnly", // no non-alphabetic character
+                "PASSWORDONLY", // uppercase only, no non-alphabetic
+                "12345678",     // no uppercase
+                "!!!!!!!!"      // no uppercase
+        })
+        void register_withInvalidPassword_returns400(String invalidPassword) throws Exception {
+            assertThatThrownBy(() -> registerUser("s1234567@ed.ac.uk", invalidPassword))
+                    .isInstanceOf(HttpClientErrorException.BadRequest.class);
+
+            assertThat(userRepository.count()).isZero();
+            assertThat(magicLinkRepository.count()).isZero();
+            verifyNoInteractions(mailSender);
+        }
+
         @Test
         void register_withVerifiedDuplicateEmail_returns409() {
             String email = uniqueEmail();
-            registerAndVerify(email, "Password123");
+            String password = "Password123";
+            registerVerifyAndGetSession(email, password);
 
-            assertThatThrownBy(() -> registerUser(email, "Password123"))
+            assertThatThrownBy(() -> registerUser(email, password))
                     .isInstanceOf(HttpClientErrorException.Conflict.class);
         }
     }
@@ -107,7 +157,7 @@ class AuthIntegrationTest {
         void verifyEmail_marksUserVerifiedAndSetsSession() {
             String email = uniqueEmail();
             registerUser(email, "Password123");
-            String token = latestUnusedTokenFor(email);
+            String token = latestTokenSentTo(email);
 
             ResponseEntity<UserInfoResponse> response = client().post().uri("/api/v1/auth/verify-email")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -121,8 +171,7 @@ class AuthIntegrationTest {
             assertThat(response.getBody().email()).isEqualTo(email);
             
             // Assert session cookie is present
-            String setCookie = response.getHeaders().getFirst(HttpHeaders.SET_COOKIE);
-            assertThat(setCookie).contains("JSESSIONID");
+            assertThat(TestFixtures.setCookies(response)).anyMatch(c -> c.startsWith("JSESSIONID="));
         }
 
         @Test
@@ -138,22 +187,172 @@ class AuthIntegrationTest {
     }
 
     @Nested
+    class ResendVerification {
+
+        @Test
+        void resendVerification_withValidEmail_returns200AndSendsEmail(){
+            String email = uniqueEmail();
+            registerUser(email, "Password123");
+            expireResendCooldown(email);
+            long magicLinksBefore = magicLinkRepository.count();
+            int mailsBefore = mailCount();
+
+            ResponseEntity<Void> response = client().post().uri("/api/v1/auth/resend-verification")
+                                                .contentType(MediaType.APPLICATION_JSON)
+                                                .body(new ResendVerificationRequest(email))
+                                                .retrieve()
+                                                .toBodilessEntity();
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(magicLinkRepository.count()).isEqualTo(magicLinksBefore + 1);
+            assertThat(mailCount()).isEqualTo(mailsBefore + 1);
+        }
+
+        @Test
+        void resendVerification_withVerifiedEmail_returns200AndSendsNoEmail(){
+            String email = uniqueEmail();
+            registerVerifyAndGetSession(email, "Password123");
+            expireResendCooldown(email);
+            long magicLinksBefore = magicLinkRepository.count();
+            int mailsBefore = mailCount();
+
+            ResponseEntity<Void> response = client().post().uri("/api/v1/auth/resend-verification")
+                                                .contentType(MediaType.APPLICATION_JSON)
+                                                .body(new ResendVerificationRequest(email))
+                                                .retrieve()
+                                                .toBodilessEntity();
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(magicLinkRepository.count()).isEqualTo(magicLinksBefore);
+            assertThat(mailCount()).isEqualTo(mailsBefore);
+        }
+
+        @Test
+        void resendVerification_withUnregisteredEmail_returns200AndSendsNoEmail(){
+            long magicLinksBefore = magicLinkRepository.count();
+            int mailsBefore = mailCount();
+
+            ResponseEntity<Void> response = client().post().uri("/api/v1/auth/resend-verification")
+                                                .contentType(MediaType.APPLICATION_JSON)
+                                                .body(new ResendVerificationRequest(uniqueEmail()))
+                                                .retrieve()
+                                                .toBodilessEntity();
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(magicLinkRepository.count()).isEqualTo(magicLinksBefore);
+            assertThat(mailCount()).isEqualTo(mailsBefore);
+        }
+
+        @ParameterizedTest()
+        @NullAndEmptySource
+        @ValueSource(strings = {
+                "   ",                       // blank
+                "not-an-email",              // no @ or domain
+                "s1234567@",                 // no domain
+                "s1234567@ed.ac.uk.evil.com",// domain with suffix appended
+                "s1234567@gmail.com",        // wrong domain
+                "s1234567@ac.uk",            // truncated domain
+                "s1234567@ED.AC.UK",         // capitalised domain
+                "s123456@ed.ac.uk",          // 6 digits (too few)
+                "s12345678@ed.ac.uk",        // 8 digits (too many)
+                "sabcdefg@ed.ac.uk",         // non-digit id
+                "x1234567@ed.ac.uk",         // wrong prefix letter
+                "1234567@ed.ac.uk",          // missing prefix letter
+                " s1234567@ed.ac.uk",        // leading whitespace
+                "s1234567@ed.ac.uk ",        // trailing whitespace
+                "s1234567@ed.ac.uk\n"        // trailing newline
+        })
+        void resendVerification_withInvalidEmail_returns400AndSendsNoEmail(String invalidEmail) {
+            registerUser(uniqueEmail(), "Password123");
+            long magicLinksBefore = magicLinkRepository.count();
+            int mailsBefore = mailCount();
+
+            assertThatThrownBy(() ->
+                    client().post().uri("/api/v1/auth/resend-verification")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(new ResendVerificationRequest(invalidEmail))
+                            .retrieve()
+                            .toBodilessEntity())
+                    .isInstanceOf(HttpClientErrorException.BadRequest.class);
+
+            assertThat(magicLinkRepository.count()).isEqualTo(magicLinksBefore);
+            assertThat(mailCount()).isEqualTo(mailsBefore);
+        }
+
+        @Test
+        void resendVerification_whenTooSoon_returns429AndSendsNoEmail() {
+            String email = uniqueEmail();
+            registerUser(email, "Password123");
+            long magicLinksBefore = magicLinkRepository.count();
+            int mailsBefore = mailCount();
+
+            assertThatThrownBy(() ->
+                    client().post().uri("/api/v1/auth/resend-verification")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(new ResendVerificationRequest(email))
+                            .retrieve()
+                            .toBodilessEntity())
+                    .isInstanceOf(HttpClientErrorException.TooManyRequests.class);
+
+            assertThat(magicLinkRepository.count()).isEqualTo(magicLinksBefore);
+            assertThat(mailCount()).isEqualTo(mailsBefore);
+        }
+    }
+
+    @Nested
     class Login {
 
         @Test
         void login_withVerifiedEmail_requires2fa() {
             String email = uniqueEmail();
-            registerAndVerify(email, "Password123");
+            String password = "Password123";
+            registerVerifyAndGetSession(email, password);
 
             ResponseEntity<LoginResponse> response = client().post().uri("/api/v1/auth/login")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(new LoginRequest(email, "Password123"))
+                    .body(new LoginRequest(email, password))
                     .retrieve()
                     .toEntity(LoginResponse.class);
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
             assertThat(response.getBody().status()).isEqualTo("2fa_required");
             assertThat(response.getBody().user()).isNull();
+        }
+
+        @ParameterizedTest()
+        @NullAndEmptySource
+        @ValueSource(strings = {
+                "   ",                       // blank
+                "not-an-email",              // no @ or domain
+                "s1234567@",                 // no domain
+                "s1234567@ed.ac.uk.evil.com",// domain with suffix appended
+                "s1234567@gmail.com",        // wrong domain
+                "s1234567@ac.uk",            // truncated domain
+                "s1234567@ED.AC.UK",         // capitalised domain
+                "s123456@ed.ac.uk",          // 6 digits (too few)
+                "s12345678@ed.ac.uk",        // 8 digits (too many)
+                "sabcdefg@ed.ac.uk",         // non-digit id
+                "x1234567@ed.ac.uk",         // wrong prefix letter
+                "1234567@ed.ac.uk",          // missing prefix letter
+                " s1234567@ed.ac.uk",        // leading whitespace
+                "s1234567@ed.ac.uk ",        // trailing whitespace
+                "s1234567@ed.ac.uk\n"        // trailing newline
+        })
+        void login_withInvalidEmail_returns400AndSendsNoEmail(String invalidEmail) {
+            registerVerifyAndGetSession(uniqueEmail(), "Password123");
+            long magicLinksBefore = magicLinkRepository.count();
+            int mailsBefore = mailCount();
+
+            assertThatThrownBy(() ->
+                    client().post().uri("/api/v1/auth/login")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(new LoginRequest(invalidEmail, "Password123"))
+                            .retrieve()
+                            .toBodilessEntity())
+                    .isInstanceOf(HttpClientErrorException.BadRequest.class);
+
+            assertThat(magicLinkRepository.count()).isEqualTo(magicLinksBefore);
+            assertThat(mailCount()).isEqualTo(mailsBefore);
         }
 
         @Test
@@ -173,7 +372,7 @@ class AuthIntegrationTest {
         @Test
         void login_withWrongPassword_returns401() {
             String email = uniqueEmail();
-            registerAndVerify(email, "Password123");
+            registerVerifyAndGetSession(email, "Password123");
 
             assertThatThrownBy(() ->
                     client().post().uri("/api/v1/auth/login")
@@ -192,7 +391,7 @@ class AuthIntegrationTest {
         void trustDevice_createsTrustedDeviceAndSetsCookie() {
             String email = uniqueEmail();
             registerUser(email, "Password123");
-            String token = latestUnusedTokenFor(email);
+            String token = latestTokenSentTo(email);
 
             ResponseEntity<UserInfoResponse> verifyResponse = client().post().uri("/api/v1/auth/verify-email")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -215,6 +414,19 @@ class AuthIntegrationTest {
             
             assertThat(trustedDeviceRepository.count()).isEqualTo(1);
         }
+
+        @Test
+        void trustDevice_whenSessionUserDeleted_returns401AndCreatesNoDevice() {
+            String session = registerVerifyAndGetSession(uniqueEmail(), "Password123");
+            deleteAllUsers();
+
+            assertThatThrownBy(() -> client().post().uri("/api/v1/auth/trust-device")
+                    .header(HttpHeaders.COOKIE, session)
+                    .header(HttpHeaders.USER_AGENT, "TestBrowser/1.0")
+                    .retrieve().toBodilessEntity())
+                    .isInstanceOf(HttpClientErrorException.Unauthorized.class);
+            assertThat(trustedDeviceRepository.count()).isZero();
+        }
     }
 
     @Nested
@@ -223,15 +435,16 @@ class AuthIntegrationTest {
         @Test
         void verify2fa_withoutTrustedDevice_returns200AndSetsSessionButNoDeviceCookie() {
             String email = uniqueEmail();
-            registerAndVerify(email, "Password123");
+            String password = "Password123";
+            registerVerifyAndGetSession(email, password);
             
             client().post().uri("/api/v1/auth/login")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(new LoginRequest(email, "Password123"))
+                    .body(new LoginRequest(email, password))
                     .retrieve()
                     .toBodilessEntity();
                     
-            String token = latestUnusedTokenFor(email);
+            String token = latestTokenSentTo(email);
 
             ResponseEntity<UserInfoResponse> response = client().post().uri("/api/v1/auth/verify-2fa")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -243,23 +456,34 @@ class AuthIntegrationTest {
             assertThat(response.getBody().email()).isEqualTo(email);
             
             // Assert session cookie is present
-            String setCookie = response.getHeaders().getFirst(HttpHeaders.SET_COOKIE);
-            assertThat(setCookie).contains("JSESSIONID");
-            assertThat(setCookie).doesNotContain("coursewise_td");
+            assertThat(TestFixtures.setCookies(response)).anyMatch(c -> c.startsWith("JSESSIONID="));
+            assertThat(TestFixtures.setCookies(response)).noneMatch(c -> c.startsWith("coursewise_td="));
+        }
+
+        @Test
+        void verify2fa_withInvalidToken_returns400() {
+            assertThatThrownBy(() ->
+                    client().post().uri("/api/v1/auth/verify-2fa")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(new VerifyEmailRequest("invalid-token"))
+                            .retrieve()
+                            .toBodilessEntity())
+                    .isInstanceOf(HttpClientErrorException.BadRequest.class);
         }
         
         @Test
         void login_withValidTrustedDevice_bypasses2faAndSetsSession() {
             String email = uniqueEmail();
-            registerAndVerify(email, "Password123");
+            String password = "Password123";
+            registerVerifyAndGetSession(email, password);
             
             client().post().uri("/api/v1/auth/login")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(new LoginRequest(email, "Password123"))
+                    .body(new LoginRequest(email, password))
                     .retrieve()
                     .toBodilessEntity();
                     
-            String token = latestUnusedTokenFor(email);
+            String token = latestTokenSentTo(email);
 
             ResponseEntity<UserInfoResponse> verifyResponse = client().post().uri("/api/v1/auth/verify-2fa")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -280,7 +504,7 @@ class AuthIntegrationTest {
             ResponseEntity<LoginResponse> loginResponse = client().post().uri("/api/v1/auth/login")
                     .header(HttpHeaders.COOKIE, tdCookie)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(new LoginRequest(email, "Password123"))
+                    .body(new LoginRequest(email, password))
                     .retrieve()
                     .toEntity(LoginResponse.class);
                     
@@ -289,22 +513,23 @@ class AuthIntegrationTest {
             assertThat(loginResponse.getBody().user().email()).isEqualTo(email);
             
             // Session cookie should be set again
-            assertThat(loginResponse.getHeaders().getFirst(HttpHeaders.SET_COOKIE)).contains("JSESSIONID");
+            assertThat(TestFixtures.setCookies(loginResponse)).anyMatch(c -> c.startsWith("JSESSIONID="));
         }
 
         @Test
-        void sharedTrustedDevice_keepsTrustIsolatedPerUser() {
+        void trustedDeviceCookie_ofAnotherUser_doesNotBypass2fa_butCanBeSharedOnceTrusted() {
             String emailA = uniqueEmail();
             String emailB = uniqueEmail();
+            String password = "Password123";
 
             // User A registers and trusts the device
-            registerAndVerify(emailA, "Password123");
+            registerVerifyAndGetSession(emailA, password);
             
             client().post().uri("/api/v1/auth/login")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(new LoginRequest(emailA, "Password123"))
+                    .body(new LoginRequest(emailA, password))
                     .retrieve().toBodilessEntity();
-            String tokenA = latestUnusedTokenFor(emailA);
+            String tokenA = latestTokenSentTo(emailA);
             ResponseEntity<Void> verifyA = client().post().uri("/api/v1/auth/verify-2fa")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(new VerifyEmailRequest(tokenA))
@@ -318,13 +543,13 @@ class AuthIntegrationTest {
             String tdCookie = TestFixtures.extractCookie(trustA, "coursewise_td");
 
             // User B registers
-            registerAndVerify(emailB, "Password123");
+            registerVerifyAndGetSession(emailB, password);
             
             // User B logs in using the same device cookie
             ResponseEntity<LoginResponse> loginB = client().post().uri("/api/v1/auth/login")
                     .header(HttpHeaders.COOKIE, tdCookie)
                     .contentType(MediaType.APPLICATION_JSON)
-                    .body(new LoginRequest(emailB, "Password123"))
+                    .body(new LoginRequest(emailB, password))
                     .retrieve().toEntity(LoginResponse.class);
                     
             // User B should still require 2FA, because they haven't explicitly trusted the device yet
@@ -332,7 +557,7 @@ class AuthIntegrationTest {
             assertThat(loginB.getBody().status()).isEqualTo("2fa_required");
             
             // User B completes 2FA
-            String tokenB = latestUnusedTokenFor(emailB);
+            String tokenB = latestTokenSentTo(emailB);
             ResponseEntity<Void> verifyB = client().post().uri("/api/v1/auth/verify-2fa")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(new VerifyEmailRequest(tokenB))
@@ -348,9 +573,155 @@ class AuthIntegrationTest {
                     
             // The returned cookie token should be exactly the same (shared token)
             assertThat(tdCookie).isEqualTo(newTdCookie);
-            
+
             // Database should have exactly 2 records for the trusted devices
             assertThat(trustedDeviceRepository.count()).isEqualTo(2);
+
+            // Now that B has trusted the device, the shared cookie lets B bypass 2FA
+            ResponseEntity<LoginResponse> loginBTrusted = client().post().uri("/api/v1/auth/login")
+                    .header(HttpHeaders.COOKIE, tdCookie)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(new LoginRequest(emailB, password))
+                    .retrieve().toEntity(LoginResponse.class);
+            assertThat(loginBTrusted.getBody().status()).isEqualTo("authenticated");
+            assertThat(loginBTrusted.getBody().user().email()).isEqualTo(emailB);
+        }
+    }
+
+    @Nested
+    class GetUser {
+
+        @Test
+        void me_withValidSession_returnsOwnUserInfo() {
+            String email = uniqueEmail();
+            String session = registerVerifyAndGetSession(email, "Password123");
+
+            ResponseEntity<UserInfoResponse> response = getMe(session);
+
+            User saved = userRepository.findByEmail(email).orElseThrow();
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            UserInfoResponse body = response.getBody();
+            assertThat(body.id()).isEqualTo(saved.getId());
+            assertThat(body.email()).isEqualTo(email);
+            assertThat(body.studentNumber()).isEqualTo(email.split("@")[0]);
+            assertThat(body.createdAt()).isNotNull();
+        }
+
+        @Test
+        void me_withoutSession_returns401() {
+            assertThatThrownBy(() -> client().get().uri("/api/v1/auth/me")
+                    .retrieve().toBodilessEntity())
+                    .isInstanceOf(HttpClientErrorException.Unauthorized.class);
+        }
+
+        @Test
+        void me_whenSessionUserDeleted_returns401() {
+            String session = registerVerifyAndGetSession(uniqueEmail(), "Password123");
+            deleteAllUsers();
+
+            assertThatThrownBy(() -> getMe(session))
+                    .isInstanceOf(HttpClientErrorException.Unauthorized.class);
+        }
+    }
+
+    @Nested
+    class UpdateProfile {
+
+        @Test
+        void updateProfile_withValidNames_returnsUpdatedUserAndSavesToDatabase() {
+            String email = uniqueEmail();
+            String session = registerVerifyAndGetSession(email, "Password123");
+
+            ResponseEntity<UserInfoResponse> response = patchProfile(session, new UpdateProfileRequest("John", "Doe"));
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(response.getBody().email()).isEqualTo(email);
+            assertThat(response.getBody().firstName()).isEqualTo("John");
+            assertThat(response.getBody().lastName()).isEqualTo("Doe");
+            
+            User saved = userRepository.findByEmail(email).orElseThrow();
+            assertThat(saved.getFirstName()).isEqualTo("John");
+            assertThat(saved.getLastName()).isEqualTo("Doe");
+        }
+
+        @Test
+        void updateProfile_twice_overwritesPreviousNames() {
+            String email = uniqueEmail();
+            String session = registerVerifyAndGetSession(email, "Password123");
+            patchProfile(session, new UpdateProfileRequest("John", "Doe"));
+
+            patchProfile(session, new UpdateProfileRequest("Jane", "Smith"));
+
+            User saved = userRepository.findByEmail(email).orElseThrow();
+            assertThat(saved.getFirstName()).isEqualTo("Jane");
+            assertThat(saved.getLastName()).isEqualTo("Smith");
+        }
+
+        @ParameterizedTest
+        @EmptySource 
+        @ValueSource(strings = {
+                "thisnameiswaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaayyytoolong",
+                "whereasthisnameisonlyjuuuuuuuuuuuuuuuuuuuusttoolong", // 51 chars - just over the max (50)
+                "    ",
+                "\t",
+                "\n"
+        })
+        void updateProfile_withInvalidNames_returns400AndChangesNothing(String invalidName) {
+            String email = uniqueEmail();
+            String session = registerVerifyAndGetSession(email, "Password123");
+            patchProfile(session, new UpdateProfileRequest("John", "Doe"));
+
+            assertThatThrownBy(() -> patchProfile(session, new UpdateProfileRequest(invalidName, "White")))
+                    .isInstanceOf(HttpClientErrorException.BadRequest.class);
+            assertThatThrownBy(() -> patchProfile(session, new UpdateProfileRequest("Jane", invalidName)))
+                    .isInstanceOf(HttpClientErrorException.BadRequest.class);
+        
+            User saved = userRepository.findByEmail(email).orElseThrow();
+            assertThat(saved.getFirstName()).isEqualTo("John");
+            assertThat(saved.getLastName()).isEqualTo("Doe");
+        }
+
+        @Test
+        void updateProfile_withOmittedFields_leavesThoseNamesUnchanged() {
+            String email = uniqueEmail();
+            String session = registerVerifyAndGetSession(email, "Password123");
+            patchProfile(session, new UpdateProfileRequest("John", "Doe"));
+
+            ResponseEntity<UserInfoResponse> response = patchProfile(session, new UpdateProfileRequest("Jane", null));
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            User saved = userRepository.findByEmail(email).orElseThrow();
+            assertThat(saved.getFirstName()).isEqualTo("Jane");
+            assertThat(saved.getLastName()).isEqualTo("Doe");
+
+            response = patchProfile(session, new UpdateProfileRequest(null, "White"));
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            saved = userRepository.findByEmail(email).orElseThrow();
+            assertThat(saved.getFirstName()).isEqualTo("Jane");
+            assertThat(saved.getLastName()).isEqualTo("White");
+        }
+
+        @Test
+        void updateProfile_unauthenticated_returns401AndChangesNothing() {
+            String email = uniqueEmail();
+            registerVerifyAndGetSession(email, "Password123");
+
+            assertThatThrownBy(() -> client().patch().uri("/api/v1/auth/profile")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(new UpdateProfileRequest("John", "Doe"))
+                    .retrieve().toBodilessEntity())
+                    .isInstanceOf(HttpClientErrorException.Unauthorized.class);
+            assertThat(userRepository.findByEmail(email).orElseThrow().getFirstName()).isNull();
+        }
+
+        @Test
+        void updateProfile_whenSessionUserDeleted_returns401() {
+            String session = registerVerifyAndGetSession(uniqueEmail(), "Password123");
+            deleteAllUsers();
+
+            assertThatThrownBy(() -> patchProfile(session, new UpdateProfileRequest("John", "Doe")))
+                    .isInstanceOf(HttpClientErrorException.Unauthorized.class);
         }
     }
 
@@ -360,14 +731,14 @@ class AuthIntegrationTest {
         @Test
         void logout_clearsSessionCookie() {
             String email = uniqueEmail();
-            registerAndVerify(email, "Password123");
+            registerVerifyAndGetSession(email, "Password123");
             
             // Login to get session
             client().post().uri("/api/v1/auth/login")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(new LoginRequest(email, "Password123"))
                     .retrieve().toBodilessEntity();
-            String token = latestUnusedTokenFor(email);
+            String token = latestTokenSentTo(email);
             
             ResponseEntity<Void> verifyResponse = client().post().uri("/api/v1/auth/verify-2fa")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -375,28 +746,38 @@ class AuthIntegrationTest {
                     .retrieve().toBodilessEntity();
             String jsessionId = TestFixtures.extractCookie(verifyResponse, "JSESSIONID");
 
+            // Verify login works
+            ResponseEntity<Void> loggedInResponse = client().get().uri("/api/v1/auth/me")
+                    .header(HttpHeaders.COOKIE, jsessionId).retrieve().toBodilessEntity();
+            assertThat(loggedInResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+
             // Logout
             ResponseEntity<Void> logoutResponse = client().post().uri("/api/v1/auth/logout")
                     .header(HttpHeaders.COOKIE, jsessionId)
                     .retrieve().toBodilessEntity();
-                    
+
             // Assert JSESSIONID is cleared
             List<String> setCookies = logoutResponse.getHeaders().get(HttpHeaders.SET_COOKIE);
             assertThat(setCookies).isNotNull();
             assertThat(setCookies).anyMatch(c -> c.startsWith("JSESSIONID=") && c.contains("Max-Age=0"));
+
+            // Assert user is unauthenticated servier-side
+            assertThatThrownBy(() -> client().get().uri("/api/v1/auth/me")
+                .header(HttpHeaders.COOKIE, jsessionId).retrieve().toBodilessEntity())
+                .isInstanceOf(HttpClientErrorException.Unauthorized.class);
         }
 
         @Test
         void logout_doesNotClearTrustedDeviceCookie() {
             String email = uniqueEmail();
-            registerAndVerify(email, "Password123");
+            registerVerifyAndGetSession(email, "Password123");
             
             // Login and trust device to get session
             client().post().uri("/api/v1/auth/login")
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(new LoginRequest(email, "Password123"))
                     .retrieve().toBodilessEntity();
-            String token = latestUnusedTokenFor(email);
+            String token = latestTokenSentTo(email);
             
             ResponseEntity<Void> verifyResponse = client().post().uri("/api/v1/auth/verify-2fa")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -417,37 +798,65 @@ class AuthIntegrationTest {
                     
             // Assert coursewise_td is NOT cleared
             List<String> setCookies = logoutResponse.getHeaders().get(HttpHeaders.SET_COOKIE);
-            if (setCookies != null) {
-                assertThat(setCookies).noneMatch(c -> c.startsWith("coursewise_td=") && c.contains("Max-Age=0"));
-            }
+            assertThat(setCookies).isNotNull();
+            assertThat(setCookies).noneMatch(c -> c.startsWith("coursewise_td=")); // ensure none of the headers touch the coursewise_td cookie
+            assertThat(trustedDeviceRepository.count()).isEqualTo(1);
         }
     }
 
     // --- Helpers ---
 
+    private String registerVerifyAndGetSession(String email, String password) {
+        registerUser(email, password);
+        ResponseEntity<Void> response = client().post().uri("/api/v1/auth/verify-email")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(new VerifyEmailRequest(latestTokenSentTo(email)))
+                .retrieve()
+                .toBodilessEntity();
+        return TestFixtures.extractCookie(response, "JSESSIONID");
+    }
+
+    private ResponseEntity<Void> registerUser(String email, String password) {
+        return client().post().uri("/api/v1/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(new RegisterRequest(email, password))
+                        .retrieve()
+                        .toBodilessEntity();
+    }
+
+    private void deleteAllUsers() {
+        jdbcTemplate.execute("DELETE FROM users");
+    }
+
+    private ResponseEntity<UserInfoResponse> getMe(String session) {
+        return client().get().uri("/api/v1/auth/me")
+                .header(HttpHeaders.COOKIE, session)
+                .retrieve()
+                .toEntity(UserInfoResponse.class);
+    }
+
+    private ResponseEntity<UserInfoResponse> patchProfile(String session, UpdateProfileRequest request) {
+        return client().patch().uri("/api/v1/auth/profile")
+                .header(HttpHeaders.COOKIE, session)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(request)
+                .retrieve()
+                .toEntity(UserInfoResponse.class);
+    }
+
     private RestClient client() {
         return restClientBuilder.baseUrl("http://localhost:" + port).build();
     }
 
-    private void registerUser(String email, String password) {
-        client().post().uri("/api/v1/auth/register")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(new RegisterRequest(email, password))
-                .retrieve()
-                .toBodilessEntity();
-    }
-    
-    private void registerAndVerify(String email, String password) {
-        registerUser(email, password);
-        String token = latestUnusedTokenFor(email);
-        client().post().uri("/api/v1/auth/verify-email")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(new VerifyEmailRequest(token))
-                .retrieve()
-                .toBodilessEntity();
+    private int mailCount() {
+        return Mockito.mockingDetails(mailSender).getInvocations().size();
     }
 
-    private String latestUnusedTokenFor(String email) {
+    private void expireResendCooldown(String email) {
+        jdbcTemplate.update("UPDATE magic_links SET created_at = created_at - INTERVAL '1 hour' WHERE email = ?", email);
+    }
+
+    private String latestTokenSentTo(String email) {
         SimpleMailMessage message = Mockito.mockingDetails(mailSender).getInvocations().stream()
                 .map(invocation -> (SimpleMailMessage) invocation.getArgument(0))
                 .filter(m -> Arrays.asList(m.getTo()).contains(email))
