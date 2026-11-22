@@ -86,7 +86,6 @@ class ReviewIntegrationTest {
         @Test
         void getReviews_returnsAllReviewResponsesInCreationOrder() {
             // One review per user+course, so each seeded review needs its own user.
-            // Explicit created_at values (oldest first) make the ordering deterministic.
             seedReview(seedUser(), new ReviewRequest(4, 3, 5, 4, true, "Great course!"), 30);
             seedReview(seedUser(), new ReviewRequest(5, 4, 2, 3, false, "Avoid this course!"), 20);
             seedReview(seedUser(), new ReviewRequest(3, 2, 3, 3, false, "It's okay"), 10);
@@ -142,9 +141,8 @@ class ReviewIntegrationTest {
     class GetSummary {
 
         @Test
-        void getSummary_afterReview_returnsSummaryResponseWithCorrectAverages() {
+        void getSummary_returnsSummaryResponseWithCorrectAverages() {
             // One review per user+course, so each seeded review needs its own user.
-            // Explicit created_at values (oldest first) make the ordering deterministic.
             seedReview(seedUser(), new ReviewRequest(4, 3, 5, 4, true, "Great course!"), 30);
             seedReview(seedUser(), new ReviewRequest(5, 4, 2, 3, false, "Avoid this course!"), 20);
             seedReview(seedUser(), new ReviewRequest(3, 2, 3, 3, false, "It's okay"), 10);
@@ -234,8 +232,9 @@ class ReviewIntegrationTest {
         @Test
         void submitReview_twice_updatesExistingReview() {
             String session = registerAndVerifyAndGetSession(EMAIL, PASSWORD);
-            seedReview(userIdFor(EMAIL), new ReviewRequest(4, 3, 5, 4, true, "Great course!"), 10);
 
+            ReviewRequest initial = new ReviewRequest(4, 3, 5, 4, true, "Great course!");
+            submitReview(session, initial, COURSE_CODE);
             ReviewRequest updated = new ReviewRequest(5, 3, 5, 4, true, "Updated body");
             submitReview(session, updated, COURSE_CODE);
 
@@ -295,6 +294,16 @@ class ReviewIntegrationTest {
                     submitReview(new ReviewRequest(4, 3, 5, 4, true, "Great course!"), COURSE_CODE))
                     .isInstanceOf(HttpClientErrorException.Unauthorized.class);
         }
+
+        @Test
+        void submitReview_whenSessionUserDeleted_returns401AndSavesNothing() {
+            String session = registerAndVerifyAndGetSession(EMAIL, PASSWORD);
+            deleteUser(EMAIL);
+
+            assertThatThrownBy(() -> submitReview(session, new ReviewRequest(4, 3, 5, 4, true, "Great course!"), COURSE_CODE))
+                    .isInstanceOf(HttpClientErrorException.Unauthorized.class);
+            assertThat(reviewRepository.findByCourse_CodeOrderByCreatedAtDesc(COURSE_CODE)).isEmpty();
+        }
     }
 
     @Nested
@@ -333,9 +342,22 @@ class ReviewIntegrationTest {
             assertThatThrownBy(() -> deleteReview(COURSE_CODE))
                     .isInstanceOf(HttpClientErrorException.Unauthorized.class);
         }
+
+        @Test
+        void deleteReview_whenSessionUserDeleted_returns401() {
+            String session = registerAndVerifyAndGetSession(EMAIL, PASSWORD);
+            deleteUser(EMAIL);
+
+            assertThatThrownBy(() -> deleteReview(session, COURSE_CODE))
+                    .isInstanceOf(HttpClientErrorException.Unauthorized.class);
+        }
     }
 
     // --- Helpers ---
+
+    private void deleteUser(String email) {
+        jdbcTemplate.update("DELETE FROM users WHERE email = ?", email);
+    }
 
     private RestClient client() {
         return restClientBuilder.baseUrl("http://localhost:" + port).build();

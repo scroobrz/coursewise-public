@@ -1,5 +1,6 @@
 package com.coursewise.review;
 
+import com.coursewise.auth.exception.UserNotFoundException;
 import com.coursewise.config.GlobalExceptionHandler;
 import com.coursewise.course.exception.CourseNotFoundException;
 import com.coursewise.review.dto.ReviewRequest;
@@ -59,6 +60,9 @@ class ReviewControllerWebTest {
 
     private MockMvc mockMvc;
 
+    private static final OffsetDateTime FIXED_CREATED_AT = OffsetDateTime.parse("2026-01-15T10:30:00Z");
+    private static final String FIXED_CREATED_AT_JSON = "2026-01-15T10:30:00Z";
+
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final UUID userId = UUID.randomUUID();
     private final UsernamePasswordAuthenticationToken principal = new UsernamePasswordAuthenticationToken(userId.toString(), null, List.of());
@@ -75,7 +79,7 @@ class ReviewControllerWebTest {
         void getReviews_returns200AndReviewResponsesForAllReviews() throws Exception {
             UUID reviewerId1 = UUID.randomUUID();
             UUID reviewerId2 = UUID.randomUUID();
-            OffsetDateTime now = OffsetDateTime.now();
+            OffsetDateTime now = FIXED_CREATED_AT;
 
             when(reviewService.getReviewsForCourse(eq("INFR11159")))
                 .thenReturn(List.of(
@@ -91,7 +95,7 @@ class ReviewControllerWebTest {
                     .andExpect(jsonPath("$[0].lecturerRating").value(4))
                     .andExpect(jsonPath("$[0].wouldRecommend").value(true))
                     .andExpect(jsonPath("$[0].body").value("Great course!"))
-                    .andExpect(jsonPath("$[0].createdAt").value(now.toString()))
+                    .andExpect(jsonPath("$[0].createdAt").value(FIXED_CREATED_AT_JSON))
                     .andExpect(jsonPath("$[1].reviewerId").value(reviewerId2.toString()))
                     .andExpect(jsonPath("$[1].workloadRating").value(5))
                     .andExpect(jsonPath("$[1].difficultyRating").value(4))
@@ -99,7 +103,7 @@ class ReviewControllerWebTest {
                     .andExpect(jsonPath("$[1].lecturerRating").value(3))
                     .andExpect(jsonPath("$[1].wouldRecommend").value(false))
                     .andExpect(jsonPath("$[1].body").value("Avoid this course!"))
-                    .andExpect(jsonPath("$[1].createdAt").value(now.toString()));
+                    .andExpect(jsonPath("$[1].createdAt").value(FIXED_CREATED_AT_JSON));
         }
 
         @Test
@@ -150,7 +154,7 @@ class ReviewControllerWebTest {
         @Test
         void upsertReview_withValidPayload_returnsCreatedAndReviewResponse() throws Exception {
             UUID reviewerId = UUID.randomUUID();
-            OffsetDateTime now = OffsetDateTime.now();
+            OffsetDateTime now = FIXED_CREATED_AT;
             ReviewRequest request = new ReviewRequest(
                 4, 3, 5, 4, true, "Great course!"
             );
@@ -173,7 +177,7 @@ class ReviewControllerWebTest {
                     .andExpect(jsonPath("$.lecturerRating").value(4))
                     .andExpect(jsonPath("$.wouldRecommend").value(true))
                     .andExpect(jsonPath("$.body").value("Great course!"))
-                    .andExpect(jsonPath("$.createdAt").value(now.toString()));
+                    .andExpect(jsonPath("$.createdAt").value(FIXED_CREATED_AT_JSON));
         }
 
         @Test
@@ -203,6 +207,22 @@ class ReviewControllerWebTest {
                     .andExpect(status().isNotFound())
                     .andExpect(jsonPath("$.title").value("Course Not Found"))
                     .andExpect(jsonPath("$.status").value(404));
+        }
+
+        @Test
+        void upsertReview_whenSessionUserNoLongerExists_returnsUnauthorized() throws Exception {
+            ReviewRequest request = new ReviewRequest(4, 3, 5, 4, true, "Great!");
+
+            when(reviewService.upsertReview(eq(userId), eq("INFR11159"), any(ReviewRequest.class)))
+                    .thenThrow(new UserNotFoundException(userId));
+
+            mockMvc.perform(post("/api/v1/courses/INFR11159/reviews")
+                            .principal(principal)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.title").value("Authentication Failed"))
+                    .andExpect(jsonPath("$.status").value(401));
         }
     }
 
@@ -237,6 +257,17 @@ class ReviewControllerWebTest {
                     .andExpect(status().isNotFound())
                     .andExpect(jsonPath("$.title").value("Course Not Found"))
                     .andExpect(jsonPath("$.status").value(404));
+        }
+
+        @Test
+        void deleteReview_whenSessionUserNoLongerExists_returnsUnauthorized() throws Exception {
+            doThrow(new UserNotFoundException(userId))
+                    .when(reviewService).deleteReview(eq(userId), eq("INFR11159"));
+
+            mockMvc.perform(delete("/api/v1/courses/INFR11159/reviews").principal(principal))
+                    .andExpect(status().isUnauthorized())
+                    .andExpect(jsonPath("$.title").value("Authentication Failed"))
+                    .andExpect(jsonPath("$.status").value(401));
         }
     }
 }
