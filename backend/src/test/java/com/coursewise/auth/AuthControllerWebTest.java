@@ -226,7 +226,7 @@ class AuthControllerWebTest {
         }
 
         @Test
-        void register_withDuplicateEmail_returns409() throws Exception {
+        void register_withVerifiedDuplicateEmail_returns409() throws Exception {
             RegisterRequest request = new RegisterRequest("s1234567@ed.ac.uk", "securePassword123");
             doThrow(new EmailAlreadyRegisteredException())
                 .when(authService).register(anyString(), anyString());

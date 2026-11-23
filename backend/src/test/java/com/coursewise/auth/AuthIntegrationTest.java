@@ -27,6 +27,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -57,6 +58,7 @@ class AuthIntegrationTest {
     @Autowired private UserRepository userRepository;
     @Autowired private TrustedDeviceRepository trustedDeviceRepository;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private PasswordEncoder passwordEncoder;
 
     @MockitoBean
     private JavaMailSender mailSender;
@@ -156,6 +158,34 @@ class AuthIntegrationTest {
 
             assertThatThrownBy(() -> registerUser(email, password))
                     .isInstanceOf(HttpClientErrorException.Conflict.class);
+        }
+
+        @Test
+        void register_withUnverifiedDuplicateEmail_returns201AndResendsVerificationAndUpdatesPassword() {
+            String email = uniqueEmail();
+            String oldPassword = "Password123";
+            String newPassword = "NewPassword456";
+            registerUser(email, oldPassword);
+            String firstToken = latestTokenSentTo(email);
+            String oldHash = userRepository.findByEmail(email).orElseThrow().getPasswordHash();
+            int mailsBefore = mailCount();
+
+            ResponseEntity<Void> response = registerUser(email, newPassword);
+
+            // Same account is reused, not duplicated, and stays unverified with the new password hash
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+            assertThat(userRepository.count()).isEqualTo(1);
+            User saved = userRepository.findByEmail(email).orElseThrow();
+            assertThat(saved.isEmailVerified()).isFalse();
+            assertThat(saved.getPasswordHash()).isNotEqualTo(oldHash);
+            assertThat(passwordEncoder.matches(newPassword, saved.getPasswordHash())).isTrue();
+            assertThat(passwordEncoder.matches(oldPassword, saved.getPasswordHash())).isFalse();
+
+            // A fresh verification email is sent and the previous link is superseded
+            assertThat(mailCount()).isEqualTo(mailsBefore + 1);
+            String secondToken = latestTokenSentTo(email);
+            assertThat(secondToken).isNotEqualTo(firstToken);
+            assertThat(magicLinkRepository.findAllByEmailAndUsedFalse(email)).hasSize(1);
         }
     }
 
