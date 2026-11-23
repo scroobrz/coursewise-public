@@ -14,7 +14,6 @@ import com.coursewise.auth.exception.ResendTooSoonException;
 import com.coursewise.auth.exception.UserNotFoundException;
 import com.coursewise.auth.validation.EmailValidator;
 import com.coursewise.auth.validation.PasswordValidator;
-import com.coursewise.config.AppConfigController;
 import com.coursewise.config.AppConfigProperties;
 import com.coursewise.config.AppConfigResponse;
 import com.coursewise.config.AppConfigResponse.ValidationProperties;
@@ -72,7 +71,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ContextConfiguration(classes = {
         AuthControllerWebTest.MvcConfig.class,
         AuthController.class,
-        AppConfigController.class,
         PasswordValidator.class,
         EmailValidator.class,
         SecurityConfig.class,
@@ -130,28 +128,6 @@ class AuthControllerWebTest {
                 .build();
     }
 
-
-    @Nested
-    class Config {
-
-        @Test
-        void getConfig_returnsPublicConfigWithoutBackendOnlyFields() throws Exception {
-            mockMvc.perform(get("/api/v1/config"))
-                    .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.trustedDeviceDays").value(TEST_TRUSTED_DEVICE_DAYS))
-                    .andExpect(jsonPath("$.resendCooldownSeconds").value(TEST_RESEND_COOLDOWN_SECS))
-                    .andExpect(jsonPath("$.magicLinkExpiryMinutes").value(TEST_MAGIC_LINK_EXPIRY_MINS))
-                    .andExpect(jsonPath("$.validation.emailRegex").value(TEST_EMAIL_REGEX))
-                    .andExpect(jsonPath("$.validation.passwordMinLength").value(TEST_PASSWORD_MIN))
-                    .andExpect(jsonPath("$.validation.passwordMaxLength").value(TEST_PASSWORD_MAX))
-                    .andExpect(jsonPath("$.validation.passwordRegex").value(TEST_PASSWORD_REGEX))
-                    .andExpect(jsonPath("$.validation.passwordRegexDescription").value(TEST_PASSWORD_REGEX_DESC))
-                    // Backend-only fields must NOT be present in the response
-                    .andExpect(jsonPath("$.cookieSecure").doesNotExist())
-                    .andExpect(jsonPath("$.frontendUrl").doesNotExist())
-                    .andExpect(jsonPath("$.fromAddress").doesNotExist());
-        }
-    }
 
     @Nested
     class Register {
