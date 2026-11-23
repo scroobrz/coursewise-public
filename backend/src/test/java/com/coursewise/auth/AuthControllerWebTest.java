@@ -33,16 +33,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.http.MediaType;
-import org.springframework.mock.web.MockHttpSession;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
-import org.springframework.security.core.context.SecurityContext;
-import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ContextConfiguration;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.junit.jupiter.SpringExtension;
 import org.springframework.test.context.web.WebAppConfiguration;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.context.WebApplicationContext;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
@@ -60,6 +58,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -125,6 +124,11 @@ class AuthControllerWebTest {
         mockMvc = MockMvcBuilders.webAppContextSetup(context)
                 .apply(springSecurity())
                 .build();
+    }
+
+    private static RequestPostProcessor authenticatedAs(UUID userId) {
+        return authentication(new UsernamePasswordAuthenticationToken(
+                userId.toString(), null, List.of(new SimpleGrantedAuthority("ROLE_USER"))));
     }
 
 
@@ -422,19 +426,12 @@ class AuthControllerWebTest {
 
         @Test
         void me_whenAuthenticated_returns200WithUserInfo() throws Exception {
-            MockHttpSession session = new MockHttpSession();
-            SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
             UUID userId = UUID.randomUUID();
-            UsernamePasswordAuthenticationToken auth =
-                    new UsernamePasswordAuthenticationToken(userId, null, List.of());
-            securityContext.setAuthentication(auth);
-            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
-
             User mockUser = new User("s1234567@ed.ac.uk");
             ReflectionTestUtils.setField(mockUser, "id", userId);
             when(authService.getUser(userId)).thenReturn(mockUser);
 
-            mockMvc.perform(get("/api/v1/auth/me").session(session))
+            mockMvc.perform(get("/api/v1/auth/me").with(authenticatedAs(userId)))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.id").value(userId.toString()))
                     .andExpect(jsonPath("$.email").value("s1234567@ed.ac.uk"));
@@ -451,16 +448,12 @@ class AuthControllerWebTest {
         @Test
         void me_whenSessionUserNoLongerExists_returns401() throws Exception {
             // Valid session, but the user was deleted since it was created (stale session).
-            MockHttpSession session = new MockHttpSession();
-            SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
             UUID userId = UUID.randomUUID();
-            securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(userId, null, List.of()));
-            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
 
             when(authService.getUser(userId))
                     .thenThrow(new UserNotFoundException(userId));
 
-            mockMvc.perform(get("/api/v1/auth/me").session(session))
+            mockMvc.perform(get("/api/v1/auth/me").with(authenticatedAs(userId)))
                     .andExpect(status().isUnauthorized());
             
             // verify that the 401 status actually came from the service, rather than getting intercepted in the security filter chain
@@ -473,20 +466,14 @@ class AuthControllerWebTest {
 
         @Test
         void updateProfile_whenAuthenticated_returns200WithUserInfo() throws Exception {
-            MockHttpSession session = new MockHttpSession();
-            SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
             UUID userId = UUID.randomUUID();
-            UsernamePasswordAuthenticationToken auth =
-                    new UsernamePasswordAuthenticationToken(userId, null, List.of());
-            securityContext.setAuthentication(auth);
-            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
-
             User mockUser = new User("s1234567@ed.ac.uk");
             ReflectionTestUtils.setField(mockUser, "id", userId);
+            
             when(authService.updateProfile(eq(userId), any(), any()))
                 .thenReturn(UserInfoResponse.from(mockUser));
 
-            mockMvc.perform(patch("/api/v1/auth/profile").session(session).contentType(MediaType.APPLICATION_JSON)
+            mockMvc.perform(patch("/api/v1/auth/profile").with(authenticatedAs(userId)).contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(new UpdateProfileRequest("John", "Doe"))).with(csrf()))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.id").value(userId.toString()))
@@ -497,21 +484,17 @@ class AuthControllerWebTest {
         @EmptySource 
         @MethodSource("com.coursewise.TestParameters#invalidNames")
         void updateProfile_withInvalidNames_returns400(String invalidName) throws Exception {
-            MockHttpSession session = new MockHttpSession();
-            SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
             UUID userId = UUID.randomUUID();
-            securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(userId, null, List.of()));
-            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
 
             mockMvc.perform(patch("/api/v1/auth/profile")
-                                .session(session)
+                                .with(authenticatedAs(userId))
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(objectMapper.writeValueAsString(new UpdateProfileRequest(invalidName, "Doe")))
                                 .with(csrf()))
                     .andExpect(status().isBadRequest());
 
             mockMvc.perform(patch("/api/v1/auth/profile")
-                                .session(session)
+                                .with(authenticatedAs(userId))
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content(objectMapper.writeValueAsString(new UpdateProfileRequest("John", invalidName)))
                                 .with(csrf()))
@@ -522,14 +505,10 @@ class AuthControllerWebTest {
 
         @Test
         void updateProfile_acceptsNullNames() throws Exception {
-            MockHttpSession session = new MockHttpSession();
-            SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
             UUID userId = UUID.randomUUID();
-            securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(userId, null, List.of()));
-            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
 
             mockMvc.perform(patch("/api/v1/auth/profile")
-                            .session(session).contentType(MediaType.APPLICATION_JSON)
+                            .with(authenticatedAs(userId)).contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(new UpdateProfileRequest(null, null))).with(csrf()))
                     .andExpect(status().isOk());
         }
@@ -546,16 +525,12 @@ class AuthControllerWebTest {
         @Test
         void updateProfile_whenSessionUserNoLongerExists_returns401() throws Exception {
             // Valid session, but the user was deleted since it was created (stale session).
-            MockHttpSession session = new MockHttpSession();
-            SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
             UUID userId = UUID.randomUUID();
-            securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(userId, null, List.of()));
-            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
 
             when(authService.updateProfile(eq(userId), any(), any()))
                     .thenThrow(new UserNotFoundException(userId));
 
-            mockMvc.perform(patch("/api/v1/auth/profile").session(session).contentType(MediaType.APPLICATION_JSON)
+            mockMvc.perform(patch("/api/v1/auth/profile").with(authenticatedAs(userId)).contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(new UpdateProfileRequest("John", "Doe"))).with(csrf()))
                     .andExpect(status().isUnauthorized());
             
@@ -569,19 +544,15 @@ class AuthControllerWebTest {
 
         @Test
         void trustDevice_whenAuthenticated_setsCookie() throws Exception {
-            MockHttpSession session = new MockHttpSession();
-            SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
             UUID userId = UUID.randomUUID();
-            securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(userId, null, List.of()));
-            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
-
             User mockUser = new User("s1234567@ed.ac.uk");
             ReflectionTestUtils.setField(mockUser, "id", userId);
+            
             when(authService.getUser(userId)).thenReturn(mockUser);
             when(authService.createTrustedDevice(eq(mockUser), any(), any()))
                 .thenReturn("new-device-token");
 
-            mockMvc.perform(post("/api/v1/auth/trust-device").with(csrf()).session(session))
+            mockMvc.perform(post("/api/v1/auth/trust-device").with(csrf()).with(authenticatedAs(userId)))
                     .andExpect(status().isOk())
                     .andExpect(cookie().value("coursewise_td", "new-device-token"))
                     .andExpect(cookie().httpOnly("coursewise_td", true));
@@ -598,16 +569,12 @@ class AuthControllerWebTest {
         @Test
         void trustDevice_whenSessionUserNoLongerExists_returns401() throws Exception {
             // Valid session, but the user was deleted since it was created (stale session).
-            MockHttpSession session = new MockHttpSession();
-            SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
             UUID userId = UUID.randomUUID();
-            securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(userId, null, List.of()));
-            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
 
             when(authService.getUser(eq(userId)))
                     .thenThrow(new UserNotFoundException(userId));
 
-            mockMvc.perform(post("/api/v1/auth/trust-device").with(csrf()).session(session))
+            mockMvc.perform(post("/api/v1/auth/trust-device").with(csrf()).with(authenticatedAs(userId)))
                     .andExpect(status().isUnauthorized());
             
             // verify that the 401 status actually came from the service, rather than getting intercepted in the security filter chain
@@ -620,15 +587,9 @@ class AuthControllerWebTest {
 
         @Test
         void logout_delegatesToServiceAndReturns200() throws Exception {
-            MockHttpSession session = new MockHttpSession();
-            SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
             UUID userId = UUID.randomUUID();
-            UsernamePasswordAuthenticationToken auth =
-                    new UsernamePasswordAuthenticationToken(userId, null, List.of());
-            securityContext.setAuthentication(auth);
-            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
 
-            mockMvc.perform(post("/api/v1/auth/logout").with(csrf()).session(session))
+            mockMvc.perform(post("/api/v1/auth/logout").with(csrf()).with(authenticatedAs(userId)))
                     .andExpect(status().isOk());
 
             verify(authService).logout(any(HttpServletRequest.class));
