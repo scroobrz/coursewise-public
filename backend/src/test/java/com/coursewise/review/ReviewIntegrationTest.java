@@ -16,7 +16,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
-import org.junit.jupiter.params.provider.Arguments;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -39,7 +38,6 @@ import org.springframework.web.client.RestClient;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
-import java.util.stream.Stream;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -252,7 +250,7 @@ class ReviewIntegrationTest {
         }
 
         @ParameterizedTest
-        @MethodSource("invalidReviewRequests")
+        @MethodSource("com.coursewise.TestParameters#invalidReviewRequests")
         void submitReview_withInvalidRating_returns400(ReviewRequest badRequest) {
             String session = registerAndVerifyAndGetSession(EMAIL, PASSWORD);
             assertThatThrownBy(() -> 
@@ -261,20 +259,6 @@ class ReviewIntegrationTest {
                         badRequest,
                         COURSE_CODE))
                     .isInstanceOf(HttpClientErrorException.BadRequest.class);
-        }
-
-        static Stream<Arguments> invalidReviewRequests() {
-            return Stream.of(
-                        Arguments.of(new ReviewRequest(6, 3, 3, 3, true, "body")),
-                        Arguments.of(new ReviewRequest(3, 6, 3, 3, true, "body")),
-                        Arguments.of(new ReviewRequest(3, 3, 6, 3, true, "body")),
-                        Arguments.of(new ReviewRequest(3, 0, 3, 6, true, "body")),
-                        Arguments.of(new ReviewRequest(-1, 3, 3, 3, true, "body")),
-                        Arguments.of(new ReviewRequest(3, -1, 3, 3, true, "body")),
-                        Arguments.of(new ReviewRequest(3, 3, -1, 3, true, "body")),
-                        Arguments.of(new ReviewRequest(3, 3, 3, -1, true, "body")),
-                        Arguments.of(new ReviewRequest(3, 3, 3, 3, null, "body"))
-            );
         }
 
         @Test

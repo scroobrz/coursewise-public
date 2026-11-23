@@ -26,10 +26,9 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EmptySource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
@@ -148,23 +147,7 @@ class AuthControllerWebTest {
 
         @ParameterizedTest()
         @NullAndEmptySource
-        @ValueSource(strings = {
-                "   ",                       // blank
-                "not-an-email",              // no @ or domain
-                "s1234567@",                 // no domain
-                "s1234567@ed.ac.uk.evil.com",// domain with suffix appended
-                "s1234567@gmail.com",        // wrong domain
-                "s1234567@ac.uk",            // truncated domain
-                "s1234567@ED.AC.UK",         // capitalised domain
-                "s123456@ed.ac.uk",          // 6 digits (too few)
-                "s12345678@ed.ac.uk",        // 8 digits (too many)
-                "sabcdefg@ed.ac.uk",         // non-digit id
-                "x1234567@ed.ac.uk",         // wrong prefix letter
-                "1234567@ed.ac.uk",          // missing prefix letter
-                " s1234567@ed.ac.uk",        // leading whitespace
-                "s1234567@ed.ac.uk ",        // trailing whitespace
-                "s1234567@ed.ac.uk\n"        // trailing newline
-        })
+        @MethodSource("com.coursewise.TestParameters#invalidEmails")
         void register_withInvalidEmail_returns400(String invalidEmail) throws Exception {
             RegisterRequest request = new RegisterRequest(invalidEmail, "securePassword123");
 
@@ -178,18 +161,7 @@ class AuthControllerWebTest {
 
         @ParameterizedTest()
         @NullAndEmptySource
-        @ValueSource(strings = {
-                "        ",     // blank
-                "Pass1",        // too short
-                "Passwo1",      // 7 chars: just below min (8)
-                "ThisIsMyPasswordAndItIsWaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaayyyyyyyyyyyyyyyyyyTooLong123",
-                "WhereasThisPasswordIsOnlyJuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuustTooLong123", // 129 chars - just over the max (128)
-                "password123",  // no uppercase
-                "PasswordOnly", // no non-alphabetic character
-                "PASSWORDONLY", // uppercase only, no non-alphabetic
-                "12345678",     // no uppercase
-                "!!!!!!!!"      // no uppercase
-        })
+        @MethodSource("com.coursewise.TestParameters#invalidPasswords")
         void register_withInvalidPassword_returns400(String invalidPassword) throws Exception {
             RegisterRequest request = new RegisterRequest("s1234567@ed.ac.uk", invalidPassword);
 
@@ -235,7 +207,7 @@ class AuthControllerWebTest {
 
         @ParameterizedTest()
         @NullAndEmptySource
-        @ValueSource(strings = {" ", "   ", "\t", "\n"})
+        @MethodSource("com.coursewise.TestParameters#blankTokens")
         void verifyEmail_withBlankToken_returns400(String blankToken) throws Exception {
             mockMvc.perform(post("/api/v1/auth/verify-email").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -247,12 +219,7 @@ class AuthControllerWebTest {
         }
 
         @ParameterizedTest()
-        @CsvSource(delimiter = '|', value = {
-                "expired token                    | This link has expired",
-                "used or superseded token         | This link has already been used",
-                "wrong-purpose token              | Invalid token",
-                "token with no corresponding user | No account found for this email"
-        })
+        @MethodSource("com.coursewise.TestParameters#rejectedTokenScenarios")
         void verifyEmail_withInvalidToken_returns400ProblemDetail(String scenario, String serviceMessage) throws Exception {
             VerifyEmailRequest request = new VerifyEmailRequest("rejected-token");
             doThrow(new InvalidTokenException(serviceMessage))
@@ -306,23 +273,7 @@ class AuthControllerWebTest {
 
         @ParameterizedTest()
         @NullAndEmptySource
-        @ValueSource(strings = {
-                "   ",                       // blank
-                "not-an-email",              // no @ or domain
-                "s1234567@",                 // no domain
-                "s1234567@ed.ac.uk.evil.com",// domain with suffix appended
-                "s1234567@gmail.com",        // wrong domain
-                "s1234567@ac.uk",            // truncated domain
-                "s1234567@ED.AC.UK",         // capitalised domain
-                "s123456@ed.ac.uk",          // 6 digits (too few)
-                "s12345678@ed.ac.uk",        // 8 digits (too many)
-                "sabcdefg@ed.ac.uk",         // non-digit id
-                "x1234567@ed.ac.uk",         // wrong prefix letter
-                "1234567@ed.ac.uk",          // missing prefix letter
-                " s1234567@ed.ac.uk",        // leading whitespace
-                "s1234567@ed.ac.uk ",        // trailing whitespace
-                "s1234567@ed.ac.uk\n"        // trailing newline
-        })
+        @MethodSource("com.coursewise.TestParameters#invalidEmails")
         void login_withInvalidEmail_returns400(String invalidEmail) throws Exception {
             LoginRequest request = new LoginRequest(invalidEmail, "Password123");
 
@@ -390,7 +341,7 @@ class AuthControllerWebTest {
 
         @ParameterizedTest()
         @NullAndEmptySource
-        @ValueSource(strings = {" ", "   ", "\t", "\n"})
+        @MethodSource("com.coursewise.TestParameters#blankTokens")
         void verify2fa_withBlankToken_returns400(String blankToken) throws Exception {
             mockMvc.perform(post("/api/v1/auth/verify-2fa").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -402,12 +353,7 @@ class AuthControllerWebTest {
         }
 
         @ParameterizedTest()
-        @CsvSource(delimiter = '|', value = {
-                "expired token                    | This link has expired",
-                "used or superseded token         | This link has already been used",
-                "wrong-purpose token              | Invalid token",
-                "token with no corresponding user | No account found for this email"
-        })
+        @MethodSource("com.coursewise.TestParameters#rejectedTokenScenarios")
         void verify2fa_withInvalidToken_returns400ProblemDetail(String scenario, String serviceMessage) throws Exception {
             VerifyEmailRequest request = new VerifyEmailRequest("rejected-token");
             doThrow(new InvalidTokenException(serviceMessage))
@@ -443,23 +389,7 @@ class AuthControllerWebTest {
 
         @ParameterizedTest()
         @NullAndEmptySource
-        @ValueSource(strings = {
-                "   ",                       // blank
-                "not-an-email",              // no @ or domain
-                "s1234567@",                 // no domain
-                "s1234567@ed.ac.uk.evil.com",// domain with suffix appended
-                "s1234567@gmail.com",        // wrong domain
-                "s1234567@ac.uk",            // truncated domain
-                "s1234567@ED.AC.UK",         // capitalised domain
-                "s123456@ed.ac.uk",          // 6 digits (too few)
-                "s12345678@ed.ac.uk",        // 8 digits (too many)
-                "sabcdefg@ed.ac.uk",         // non-digit id
-                "x1234567@ed.ac.uk",         // wrong prefix letter
-                "1234567@ed.ac.uk",          // missing prefix letter
-                " s1234567@ed.ac.uk",        // leading whitespace
-                "s1234567@ed.ac.uk ",        // trailing whitespace
-                "s1234567@ed.ac.uk\n"        // trailing newline
-        })
+        @MethodSource("com.coursewise.TestParameters#invalidEmails")
         void resendVerification_withInvalidEmail_returns400(String invalidEmail) throws Exception {
             ResendVerificationRequest request = new ResendVerificationRequest(invalidEmail);
 
@@ -565,13 +495,7 @@ class AuthControllerWebTest {
 
         @ParameterizedTest
         @EmptySource 
-        @ValueSource(strings = {
-                "thisnameiswaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaayyytoolong",
-                "whereasthisnameisonlyjuuuuuuuuuuuuuuuuuuuusttoolong", // 51 chars - just over the max (50)
-                "    ",
-                "\t",
-                "\n"
-        })
+        @MethodSource("com.coursewise.TestParameters#invalidNames")
         void updateProfile_withInvalidNames_returns400(String invalidName) throws Exception {
             MockHttpSession session = new MockHttpSession();
             SecurityContext securityContext = SecurityContextHolder.createEmptyContext();

@@ -13,9 +13,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.EmptySource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
-import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -101,23 +101,7 @@ class AuthIntegrationTest {
 
         @ParameterizedTest()
         @NullAndEmptySource
-        @ValueSource(strings = {
-                "   ",                       // blank
-                "not-an-email",              // no @ or domain
-                "s1234567@",                 // no domain
-                "s1234567@ed.ac.uk.evil.com",// domain with suffix appended
-                "s1234567@gmail.com",        // wrong domain
-                "s1234567@ac.uk",            // truncated domain
-                "s1234567@ED.AC.UK",         // capitalised domain
-                "s123456@ed.ac.uk",          // 6 digits (too few)
-                "s12345678@ed.ac.uk",        // 8 digits (too many)
-                "sabcdefg@ed.ac.uk",         // non-digit id
-                "x1234567@ed.ac.uk",         // wrong prefix letter
-                "1234567@ed.ac.uk",          // missing prefix letter
-                " s1234567@ed.ac.uk",        // leading whitespace
-                "s1234567@ed.ac.uk ",        // trailing whitespace
-                "s1234567@ed.ac.uk\n"        // trailing newline
-        })
+        @MethodSource("com.coursewise.TestParameters#invalidEmails")
         void register_withInvalidEmail_returns400(String invalidEmail) throws Exception {
             assertThatThrownBy(() -> registerUser(invalidEmail, "Password123"))
                     .isInstanceOf(HttpClientErrorException.BadRequest.class);
@@ -129,18 +113,7 @@ class AuthIntegrationTest {
 
         @ParameterizedTest()
         @NullAndEmptySource
-        @ValueSource(strings = {
-                "        ",     // blank
-                "Pass1",        // too short
-                "Passwo1",      // 7 chars: just below min (8)
-                "ThisIsMyPasswordAndItIsWaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaayyyyyyyyyyyyyyyyyyTooLong123",
-                "WhereasThisPasswordIsOnlyJuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuustTooLong123", // 129 chars - just over the max (128)
-                "password123",  // no uppercase
-                "PasswordOnly", // no non-alphabetic character
-                "PASSWORDONLY", // uppercase only, no non-alphabetic
-                "12345678",     // no uppercase
-                "!!!!!!!!"      // no uppercase
-        })
+        @MethodSource("com.coursewise.TestParameters#invalidPasswords")
         void register_withInvalidPassword_returns400(String invalidPassword) throws Exception {
             assertThatThrownBy(() -> registerUser("s1234567@ed.ac.uk", invalidPassword))
                     .isInstanceOf(HttpClientErrorException.BadRequest.class);
@@ -211,7 +184,7 @@ class AuthIntegrationTest {
 
         @ParameterizedTest()
         @NullAndEmptySource
-        @ValueSource(strings = {" ", "   ", "\t", "\n"})
+        @MethodSource("com.coursewise.TestParameters#blankTokens")
         void verifyEmail_withBlankToken_returns400AndIssuesNoSession(String blankToken) {
             String email = uniqueEmail();
             registerUser(email, "Password123");
@@ -354,23 +327,7 @@ class AuthIntegrationTest {
 
         @ParameterizedTest()
         @NullAndEmptySource
-        @ValueSource(strings = {
-                "   ",                       // blank
-                "not-an-email",              // no @ or domain
-                "s1234567@",                 // no domain
-                "s1234567@ed.ac.uk.evil.com",// domain with suffix appended
-                "s1234567@gmail.com",        // wrong domain
-                "s1234567@ac.uk",            // truncated domain
-                "s1234567@ED.AC.UK",         // capitalised domain
-                "s123456@ed.ac.uk",          // 6 digits (too few)
-                "s12345678@ed.ac.uk",        // 8 digits (too many)
-                "sabcdefg@ed.ac.uk",         // non-digit id
-                "x1234567@ed.ac.uk",         // wrong prefix letter
-                "1234567@ed.ac.uk",          // missing prefix letter
-                " s1234567@ed.ac.uk",        // leading whitespace
-                "s1234567@ed.ac.uk ",        // trailing whitespace
-                "s1234567@ed.ac.uk\n"        // trailing newline
-        })
+        @MethodSource("com.coursewise.TestParameters#invalidEmails")
         void resendVerification_withInvalidEmail_returns400AndSendsNoEmail(String invalidEmail) {
             registerUser(uniqueEmail(), "Password123");
             long magicLinksBefore = magicLinkRepository.count();
@@ -430,23 +387,7 @@ class AuthIntegrationTest {
 
         @ParameterizedTest()
         @NullAndEmptySource
-        @ValueSource(strings = {
-                "   ",                       // blank
-                "not-an-email",              // no @ or domain
-                "s1234567@",                 // no domain
-                "s1234567@ed.ac.uk.evil.com",// domain with suffix appended
-                "s1234567@gmail.com",        // wrong domain
-                "s1234567@ac.uk",            // truncated domain
-                "s1234567@ED.AC.UK",         // capitalised domain
-                "s123456@ed.ac.uk",          // 6 digits (too few)
-                "s12345678@ed.ac.uk",        // 8 digits (too many)
-                "sabcdefg@ed.ac.uk",         // non-digit id
-                "x1234567@ed.ac.uk",         // wrong prefix letter
-                "1234567@ed.ac.uk",          // missing prefix letter
-                " s1234567@ed.ac.uk",        // leading whitespace
-                "s1234567@ed.ac.uk ",        // trailing whitespace
-                "s1234567@ed.ac.uk\n"        // trailing newline
-        })
+        @MethodSource("com.coursewise.TestParameters#invalidEmails")
         void login_withInvalidEmail_returns400AndSendsNoEmail(String invalidEmail) {
             registerVerifyAndGetSession(uniqueEmail(), "Password123");
             long magicLinksBefore = magicLinkRepository.count();
@@ -584,7 +525,7 @@ class AuthIntegrationTest {
 
         @ParameterizedTest()
         @NullAndEmptySource
-        @ValueSource(strings = {" ", "   ", "\t", "\n"})
+        @MethodSource("com.coursewise.TestParameters#blankTokens")
         void verify2fa_withBlankToken_returns400AndIssuesNoSession(String blankToken) {
             String email = uniqueEmail();
             registerVerifyAndGetSession(email, "Password123");
@@ -831,13 +772,7 @@ class AuthIntegrationTest {
 
         @ParameterizedTest
         @EmptySource 
-        @ValueSource(strings = {
-                "thisnameiswaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaayyytoolong",
-                "whereasthisnameisonlyjuuuuuuuuuuuuuuuuuuuusttoolong", // 51 chars - just over the max (50)
-                "    ",
-                "\t",
-                "\n"
-        })
+        @MethodSource("com.coursewise.TestParameters#invalidNames")
         void updateProfile_withInvalidNames_returns400AndChangesNothing(String invalidName) {
             String email = uniqueEmail();
             String session = registerVerifyAndGetSession(email, "Password123");
