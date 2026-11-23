@@ -168,11 +168,7 @@ class AuthIntegrationTest {
             registerUser(email, "Password123");
             String token = latestTokenSentTo(email);
 
-            ResponseEntity<UserInfoResponse> response = client().post().uri("/api/v1/auth/verify-email")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new VerifyEmailRequest(token))
-                    .retrieve()
-                    .toEntity(UserInfoResponse.class);
+            ResponseEntity<UserInfoResponse> response = postToken(VERIFY_EMAIL_PATH, token);
 
             User verified = userRepository.findByEmail(email).orElseThrow();
             assertThat(verified.isEmailVerified()).isTrue();
@@ -185,13 +181,7 @@ class AuthIntegrationTest {
 
         @Test
         void verifyEmail_withInvalidToken_returns400() {
-            assertThatThrownBy(() ->
-                    client().post().uri("/api/v1/auth/verify-email")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .body(new VerifyEmailRequest("invalid-token"))
-                            .retrieve()
-                            .toBodilessEntity())
-                    .isInstanceOf(HttpClientErrorException.BadRequest.class);
+            assertTokenRejected(VERIFY_EMAIL_PATH, "invalid-token", TOKEN_INVALID);
         }
 
         @Test
@@ -464,11 +454,7 @@ class AuthIntegrationTest {
             registerUser(email, "Password123");
             String token = latestTokenSentTo(email);
 
-            ResponseEntity<UserInfoResponse> verifyResponse = client().post().uri("/api/v1/auth/verify-email")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new VerifyEmailRequest(token))
-                    .retrieve()
-                    .toEntity(UserInfoResponse.class);
+            ResponseEntity<UserInfoResponse> verifyResponse = postToken(VERIFY_EMAIL_PATH, token);
             
             String sessionCookie = TestFixtures.extractCookie(verifyResponse, "JSESSIONID");
 
@@ -509,19 +495,9 @@ class AuthIntegrationTest {
             String password = "Password123";
             registerVerifyAndGetSession(email, password);
             
-            client().post().uri("/api/v1/auth/login")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new LoginRequest(email, password))
-                    .retrieve()
-                    .toBodilessEntity();
-                    
-            String token = latestTokenSentTo(email);
+            String token = requestTwoFactorToken(email, password);
 
-            ResponseEntity<UserInfoResponse> response = client().post().uri("/api/v1/auth/verify-2fa")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new VerifyEmailRequest(token))
-                    .retrieve()
-                    .toEntity(UserInfoResponse.class);
+            ResponseEntity<UserInfoResponse> response = postToken(VERIFY_2FA_PATH, token);
 
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
             assertThat(response.getBody().email()).isEqualTo(email);
@@ -533,13 +509,7 @@ class AuthIntegrationTest {
 
         @Test
         void verify2fa_withInvalidToken_returns400() {
-            assertThatThrownBy(() ->
-                    client().post().uri("/api/v1/auth/verify-2fa")
-                            .contentType(MediaType.APPLICATION_JSON)
-                            .body(new VerifyEmailRequest("invalid-token"))
-                            .retrieve()
-                            .toBodilessEntity())
-                    .isInstanceOf(HttpClientErrorException.BadRequest.class);
+            assertTokenRejected(VERIFY_2FA_PATH, "invalid-token", TOKEN_INVALID);
         }
 
         @Test
@@ -607,19 +577,9 @@ class AuthIntegrationTest {
             String password = "Password123";
             registerVerifyAndGetSession(email, password);
             
-            client().post().uri("/api/v1/auth/login")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new LoginRequest(email, password))
-                    .retrieve()
-                    .toBodilessEntity();
-                    
-            String token = latestTokenSentTo(email);
+            String token = requestTwoFactorToken(email, password);
 
-            ResponseEntity<UserInfoResponse> verifyResponse = client().post().uri("/api/v1/auth/verify-2fa")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new VerifyEmailRequest(token))
-                    .retrieve()
-                    .toEntity(UserInfoResponse.class);
+            ResponseEntity<UserInfoResponse> verifyResponse = postToken(VERIFY_2FA_PATH, token);
                     
             String jsessionId = TestFixtures.extractCookie(verifyResponse, "JSESSIONID");
                     
@@ -655,15 +615,8 @@ class AuthIntegrationTest {
             // User A registers and trusts the device
             registerVerifyAndGetSession(emailA, password);
             
-            client().post().uri("/api/v1/auth/login")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new LoginRequest(emailA, password))
-                    .retrieve().toBodilessEntity();
-            String tokenA = latestTokenSentTo(emailA);
-            ResponseEntity<Void> verifyA = client().post().uri("/api/v1/auth/verify-2fa")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new VerifyEmailRequest(tokenA))
-                    .retrieve().toBodilessEntity();
+            String tokenA = requestTwoFactorToken(emailA, password);
+            ResponseEntity<UserInfoResponse> verifyA = postToken(VERIFY_2FA_PATH, tokenA);
             String sessionA = TestFixtures.extractCookie(verifyA, "JSESSIONID");
                     
             ResponseEntity<Void> trustA = client().post().uri("/api/v1/auth/trust-device")
@@ -688,10 +641,7 @@ class AuthIntegrationTest {
             
             // User B completes 2FA
             String tokenB = latestTokenSentTo(emailB);
-            ResponseEntity<Void> verifyB = client().post().uri("/api/v1/auth/verify-2fa")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new VerifyEmailRequest(tokenB))
-                    .retrieve().toBodilessEntity();
+            ResponseEntity<UserInfoResponse> verifyB = postToken(VERIFY_2FA_PATH, tokenB);
             String sessionB = TestFixtures.extractCookie(verifyB, "JSESSIONID");
                     
             // User B now trusts the device too (sending the existing tdCookie)
@@ -864,16 +814,9 @@ class AuthIntegrationTest {
             registerVerifyAndGetSession(email, "Password123");
             
             // Login to get session
-            client().post().uri("/api/v1/auth/login")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new LoginRequest(email, "Password123"))
-                    .retrieve().toBodilessEntity();
-            String token = latestTokenSentTo(email);
+            String token = requestTwoFactorToken(email, "Password123");
             
-            ResponseEntity<Void> verifyResponse = client().post().uri("/api/v1/auth/verify-2fa")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new VerifyEmailRequest(token))
-                    .retrieve().toBodilessEntity();
+            ResponseEntity<UserInfoResponse> verifyResponse = postToken(VERIFY_2FA_PATH, token);
             String jsessionId = TestFixtures.extractCookie(verifyResponse, "JSESSIONID");
 
             // Verify login works
@@ -903,16 +846,9 @@ class AuthIntegrationTest {
             registerVerifyAndGetSession(email, "Password123");
             
             // Login and trust device to get session
-            client().post().uri("/api/v1/auth/login")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new LoginRequest(email, "Password123"))
-                    .retrieve().toBodilessEntity();
-            String token = latestTokenSentTo(email);
+            String token = requestTwoFactorToken(email, "Password123");
             
-            ResponseEntity<Void> verifyResponse = client().post().uri("/api/v1/auth/verify-2fa")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new VerifyEmailRequest(token))
-                    .retrieve().toBodilessEntity();
+            ResponseEntity<UserInfoResponse> verifyResponse = postToken(VERIFY_2FA_PATH, token);
             String jsessionId = TestFixtures.extractCookie(verifyResponse, "JSESSIONID");
 
             ResponseEntity<Void> trustResponse = client().post().uri("/api/v1/auth/trust-device")
@@ -938,11 +874,7 @@ class AuthIntegrationTest {
 
     private String registerVerifyAndGetSession(String email, String password) {
         registerUser(email, password);
-        ResponseEntity<Void> response = client().post().uri("/api/v1/auth/verify-email")
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(new VerifyEmailRequest(latestTokenSentTo(email)))
-                .retrieve()
-                .toBodilessEntity();
+        ResponseEntity<UserInfoResponse> response = postToken(VERIFY_EMAIL_PATH, latestTokenSentTo(email));
         return TestFixtures.extractCookie(response, "JSESSIONID");
     }
 
