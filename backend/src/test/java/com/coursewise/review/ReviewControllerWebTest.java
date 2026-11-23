@@ -2,6 +2,7 @@ package com.coursewise.review;
 
 import com.coursewise.auth.exception.UserNotFoundException;
 import com.coursewise.config.GlobalExceptionHandler;
+import com.coursewise.config.SecurityConfig;
 import com.coursewise.course.exception.CourseNotFoundException;
 import com.coursewise.review.dto.ReviewRequest;
 import com.coursewise.review.dto.ReviewResponse;
@@ -35,7 +36,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.authentication;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -44,6 +49,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ContextConfiguration(classes = {
         ReviewControllerWebTest.MvcConfig.class,
         ReviewController.class,
+        SecurityConfig.class,
         GlobalExceptionHandler.class
 })
 @WebAppConfiguration
@@ -71,7 +77,9 @@ class ReviewControllerWebTest {
 
     @BeforeEach
     void setup() {
-        mockMvc = MockMvcBuilders.webAppContextSetup(context).build();
+        mockMvc = MockMvcBuilders.webAppContextSetup(context)
+                .apply(springSecurity())
+                .build();
     }
 
     @Nested
@@ -168,7 +176,7 @@ class ReviewControllerWebTest {
                 .thenReturn(response);
 
             mockMvc.perform(post("/api/v1/courses/INFR11159/reviews")
-                            .principal(principal)
+                            .with(authentication(principal)).with(csrf())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isCreated())
@@ -186,7 +194,7 @@ class ReviewControllerWebTest {
         @MethodSource("com.coursewise.TestParameters#invalidReviewRequests")
         void upsertReview_invalidPayload_returnsBadRequest(ReviewRequest badRequest) throws Exception {
             mockMvc.perform(post("/api/v1/courses/INFR11159/reviews")
-                            .principal(principal)
+                            .with(authentication(principal)).with(csrf())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(badRequest)))
                     .andExpect(status().isBadRequest())
@@ -196,7 +204,7 @@ class ReviewControllerWebTest {
         @Test
         void upsertReview_acceptsNullBody() throws Exception {
             mockMvc.perform(post("/api/v1/courses/INFR11159/reviews")
-                            .principal(principal)
+                            .with(authentication(principal)).with(csrf())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(new ReviewRequest(4, 3, 5, 4, true, null))))
                     .andExpect(status().isCreated());
@@ -210,7 +218,7 @@ class ReviewControllerWebTest {
                     .thenThrow(new CourseNotFoundException("NOTFOUND"));
 
             mockMvc.perform(post("/api/v1/courses/NOTFOUND/reviews")
-                            .principal(principal)
+                            .with(authentication(principal)).with(csrf())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isNotFound())
@@ -226,12 +234,25 @@ class ReviewControllerWebTest {
                     .thenThrow(new UserNotFoundException(userId));
 
             mockMvc.perform(post("/api/v1/courses/INFR11159/reviews")
-                            .principal(principal)
+                            .with(authentication(principal)).with(csrf())
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isUnauthorized())
                     .andExpect(jsonPath("$.title").value("Authentication Failed"))
                     .andExpect(jsonPath("$.status").value(401));
+        }
+
+        @Test
+        void upsertReview_whenUnauthenticated_returns401AndNeverReachesService() throws Exception {
+            ReviewRequest request = new ReviewRequest(4, 3, 5, 4, true, "Great!");
+
+            mockMvc.perform(post("/api/v1/courses/INFR11159/reviews")
+                            .with(csrf())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isUnauthorized());
+
+            verifyNoInteractions(reviewService);
         }
     }
 
@@ -240,7 +261,7 @@ class ReviewControllerWebTest {
 
         @Test
         void deleteReview_success_returnsNoContent() throws Exception {
-            mockMvc.perform(delete("/api/v1/courses/INFR11159/reviews").principal(principal))
+            mockMvc.perform(delete("/api/v1/courses/INFR11159/reviews").with(authentication(principal)).with(csrf()))
                     .andExpect(status().isNoContent());
 
             verify(reviewService).deleteReview(userId, "INFR11159");
@@ -251,7 +272,7 @@ class ReviewControllerWebTest {
             doThrow(new ReviewNotFoundException(userId, "INFR11159"))
                     .when(reviewService).deleteReview(eq(userId), eq("INFR11159"));
 
-            mockMvc.perform(delete("/api/v1/courses/INFR11159/reviews").principal(principal))
+            mockMvc.perform(delete("/api/v1/courses/INFR11159/reviews").with(authentication(principal)).with(csrf()))
                     .andExpect(status().isNotFound())
                     .andExpect(jsonPath("$.title").value("Review Not Found"))
                     .andExpect(jsonPath("$.status").value(404));
@@ -262,7 +283,7 @@ class ReviewControllerWebTest {
             doThrow(new CourseNotFoundException( "NOTFOUND"))
                     .when(reviewService).deleteReview(eq(userId), eq("NOTFOUND"));
 
-            mockMvc.perform(delete("/api/v1/courses/NOTFOUND/reviews").principal(principal))
+            mockMvc.perform(delete("/api/v1/courses/NOTFOUND/reviews").with(authentication(principal)).with(csrf()))
                     .andExpect(status().isNotFound())
                     .andExpect(jsonPath("$.title").value("Course Not Found"))
                     .andExpect(jsonPath("$.status").value(404));
@@ -273,10 +294,18 @@ class ReviewControllerWebTest {
             doThrow(new UserNotFoundException(userId))
                     .when(reviewService).deleteReview(eq(userId), eq("INFR11159"));
 
-            mockMvc.perform(delete("/api/v1/courses/INFR11159/reviews").principal(principal))
+            mockMvc.perform(delete("/api/v1/courses/INFR11159/reviews").with(authentication(principal)).with(csrf()))
                     .andExpect(status().isUnauthorized())
                     .andExpect(jsonPath("$.title").value("Authentication Failed"))
                     .andExpect(jsonPath("$.status").value(401));
+        }
+
+        @Test
+        void deleteReview_whenUnauthenticated_returns401AndNeverReachesService() throws Exception {
+            mockMvc.perform(delete("/api/v1/courses/INFR11159/reviews").with(csrf()))
+                    .andExpect(status().isUnauthorized());
+
+            verifyNoInteractions(reviewService);
         }
     }
 }
