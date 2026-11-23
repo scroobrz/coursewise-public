@@ -503,6 +503,14 @@ class AuthIntegrationTest {
         }
 
         @Test
+        void trustDevice_whenUnauthenticated_returns401(){
+            assertThatThrownBy(() -> client().post().uri("/api/v1/auth/trust-device")
+                    .header(HttpHeaders.USER_AGENT, "TestBrowser/1.0")
+                    .retrieve().toBodilessEntity())
+                    .isInstanceOf(HttpClientErrorException.Unauthorized.class);
+        }
+
+        @Test
         void trustDevice_whenSessionUserDeleted_returns401AndCreatesNoDevice() {
             String session = registerVerifyAndGetSession(uniqueEmail(), "Password123");
             deleteAllUsers();
@@ -897,6 +905,13 @@ class AuthIntegrationTest {
             assertThat(setCookies).isNotNull();
             assertThat(setCookies).noneMatch(c -> c.startsWith("coursewise_td=")); // ensure none of the headers touch the coursewise_td cookie
             assertThat(trustedDeviceRepository.count()).isEqualTo(1);
+        }
+
+        @Test 
+        void logout_whenUnauthenticated_returns401(){
+            assertThatThrownBy(() -> client().post().uri("/api/v1/auth/logout")
+                    .retrieve().toBodilessEntity())
+                .isInstanceOf(HttpClientErrorException.Unauthorized.class);
         }
     }
 
