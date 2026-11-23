@@ -209,6 +209,24 @@ class AuthIntegrationTest {
             assertThat(TestFixtures.setCookies(response)).anyMatch(c -> c.startsWith("JSESSIONID="));
         }
 
+        @ParameterizedTest()
+        @NullAndEmptySource
+        @ValueSource(strings = {" ", "   ", "\t", "\n"})
+        void verifyEmail_withBlankToken_returns400AndIssuesNoSession(String blankToken) {
+            String email = uniqueEmail();
+            registerUser(email, "Password123");
+
+            assertThatThrownBy(() -> postToken(VERIFY_EMAIL_PATH, blankToken))
+                .isInstanceOfSatisfying(HttpClientErrorException.BadRequest.class, e -> {
+                    HttpHeaders headers = e.getResponseHeaders();
+                    List<String> setCookies = headers == null ? null : headers.get(HttpHeaders.SET_COOKIE);
+                    assertThat(setCookies == null ? List.<String>of() : setCookies)
+                            .noneMatch(c -> c.startsWith("JSESSIONID="));
+                });
+
+            assertThat(userRepository.findByEmail(email).orElseThrow().isEmailVerified()).isFalse();
+        }
+
         @Test
         void verifyEmail_withInvalidToken_returns400() {
             assertTokenRejected(VERIFY_EMAIL_PATH, "invalid-token", TOKEN_INVALID);
@@ -461,6 +479,25 @@ class AuthIntegrationTest {
         }
 
         @Test
+        void login_withBlankPassword_returns400AndSendsNoEmail() {
+            String email = uniqueEmail();
+            registerVerifyAndGetSession(email, "Password123");
+            long magicLinksBefore = magicLinkRepository.count();
+            int mailsBefore = mailCount();
+
+            assertThatThrownBy(() ->
+                    client().post().uri("/api/v1/auth/login")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .body(new LoginRequest(email, ""))
+                            .retrieve()
+                            .toBodilessEntity())
+                    .isInstanceOf(HttpClientErrorException.BadRequest.class);
+
+            assertThat(magicLinkRepository.count()).isEqualTo(magicLinksBefore);
+            assertThat(mailCount()).isEqualTo(mailsBefore);
+        }
+
+        @Test
         void login_withWrongPassword_returns401() {
             String email = uniqueEmail();
             registerVerifyAndGetSession(email, "Password123");
@@ -543,6 +580,23 @@ class AuthIntegrationTest {
             // Assert session cookie is present
             assertThat(TestFixtures.setCookies(response)).anyMatch(c -> c.startsWith("JSESSIONID="));
             assertThat(TestFixtures.setCookies(response)).noneMatch(c -> c.startsWith("coursewise_td="));
+        }
+
+        @ParameterizedTest()
+        @NullAndEmptySource
+        @ValueSource(strings = {" ", "   ", "\t", "\n"})
+        void verify2fa_withBlankToken_returns400AndIssuesNoSession(String blankToken) {
+            String email = uniqueEmail();
+            registerVerifyAndGetSession(email, "Password123");
+            requestTwoFactorToken(email, "Password123");
+
+            assertThatThrownBy(() -> postToken(VERIFY_2FA_PATH, blankToken))
+                .isInstanceOfSatisfying(HttpClientErrorException.BadRequest.class, e -> {
+                    HttpHeaders headers = e.getResponseHeaders();
+                    List<String> setCookies = headers == null ? null : headers.get(HttpHeaders.SET_COOKIE);
+                    assertThat(setCookies == null ? List.<String>of() : setCookies)
+                            .noneMatch(c -> c.startsWith("JSESSIONID="));
+                });
         }
 
         @Test

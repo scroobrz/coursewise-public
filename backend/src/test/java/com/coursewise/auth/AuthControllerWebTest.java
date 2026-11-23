@@ -234,6 +234,19 @@ class AuthControllerWebTest {
         }
 
         @ParameterizedTest()
+        @NullAndEmptySource
+        @ValueSource(strings = {" ", "   ", "\t", "\n"})
+        void verifyEmail_withBlankToken_returns400(String blankToken) throws Exception {
+            mockMvc.perform(post("/api/v1/auth/verify-email").with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new VerifyEmailRequest(blankToken))))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(cookie().doesNotExist("JSESSIONID"));
+
+            verifyNoInteractions(authService);
+        }
+
+        @ParameterizedTest()
         @CsvSource(delimiter = '|', value = {
                 "expired token                    | This link has expired",
                 "used or superseded token         | This link has already been used",
@@ -291,18 +304,6 @@ class AuthControllerWebTest {
                     .andExpect(jsonPath("$.user.email").value("s1234567@ed.ac.uk"));
         }
 
-        @Test
-        void login_withWrongCredentials_returns401() throws Exception {
-            LoginRequest request = new LoginRequest("s1234567@ed.ac.uk", "wrong");
-            when(authService.login(anyString(), anyString(), any(), any(HttpServletRequest.class)))
-                .thenThrow(new InvalidCredentialsException());
-
-            mockMvc.perform(post("/api/v1/auth/login").with(csrf())
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(objectMapper.writeValueAsString(request)))
-                    .andExpect(status().isUnauthorized());
-        }
-
         @ParameterizedTest()
         @NullAndEmptySource
         @ValueSource(strings = {
@@ -344,6 +345,28 @@ class AuthControllerWebTest {
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isForbidden());
         }
+
+        @Test
+        void login_withBlankPassword_returns400() throws Exception {
+            mockMvc.perform(post("/api/v1/auth/login").with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new LoginRequest("s1234567@ed.ac.uk", ""))))
+                    .andExpect(status().isBadRequest());
+
+            verifyNoInteractions(authService);
+        }
+
+        @Test
+        void login_withWrongPassword_returns401() throws Exception {
+            LoginRequest request = new LoginRequest("s1234567@ed.ac.uk", "wrong");
+            when(authService.login(anyString(), anyString(), any(), any(HttpServletRequest.class)))
+                .thenThrow(new InvalidCredentialsException());
+
+            mockMvc.perform(post("/api/v1/auth/login").with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isUnauthorized());
+        }
     }
 
     @Nested
@@ -363,6 +386,19 @@ class AuthControllerWebTest {
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.email").value("s1234567@ed.ac.uk"));
+        }
+
+        @ParameterizedTest()
+        @NullAndEmptySource
+        @ValueSource(strings = {" ", "   ", "\t", "\n"})
+        void verify2fa_withBlankToken_returns400(String blankToken) throws Exception {
+            mockMvc.perform(post("/api/v1/auth/verify-2fa").with(csrf())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(new VerifyEmailRequest(blankToken))))
+                    .andExpect(status().isBadRequest())
+                    .andExpect(cookie().doesNotExist("JSESSIONID"));
+
+            verifyNoInteractions(authService);
         }
 
         @ParameterizedTest()
