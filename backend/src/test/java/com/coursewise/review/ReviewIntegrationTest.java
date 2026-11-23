@@ -82,7 +82,7 @@ class ReviewIntegrationTest {
     class GetReviews {
 
         @Test
-        void getReviews_returnsAllReviewResponsesInCreationOrder() {
+        void getReviews_returnsAllReviewResponsesNewestFirst() {
             // One review per user+course, so each seeded review needs its own user.
             seedReview(seedUser(), new ReviewRequest(4, 3, 5, 4, true, "Great course!"), 30);
             seedReview(seedUser(), new ReviewRequest(5, 4, 2, 3, false, "Avoid this course!"), 20);
