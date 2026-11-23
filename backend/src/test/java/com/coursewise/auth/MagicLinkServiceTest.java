@@ -23,7 +23,6 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -204,7 +203,8 @@ class MagicLinkServiceTest {
             when(magicLinkRepository.findByToken(TokenHasher.hash(rawToken))).thenReturn(Optional.of(link));
 
             assertThatThrownBy(() -> magicLinkService.validateAndConsumeToken(rawToken, MagicLinkPurpose.EMAIL_VERIFICATION))
-                    .isInstanceOf(InvalidTokenException.class);
+                    .isInstanceOf(InvalidTokenException.class)
+                    .hasMessage("This link has expired");
         }
 
         @Test
@@ -216,7 +216,8 @@ class MagicLinkServiceTest {
             when(magicLinkRepository.findByToken(TokenHasher.hash(rawToken))).thenReturn(Optional.of(link));
 
             assertThatThrownBy(() -> magicLinkService.validateAndConsumeToken(rawToken, MagicLinkPurpose.EMAIL_VERIFICATION))
-                    .isInstanceOf(InvalidTokenException.class);
+                    .isInstanceOf(InvalidTokenException.class)
+                    .hasMessage("This link has already been used");
         }
 
         @Test
@@ -228,15 +229,23 @@ class MagicLinkServiceTest {
 
             // Passing EMAIL_VERIFICATION instead of LOGIN_2FA
             assertThatThrownBy(() -> magicLinkService.validateAndConsumeToken(rawToken, MagicLinkPurpose.EMAIL_VERIFICATION))
-                    .isInstanceOf(InvalidTokenException.class);
+                    .isInstanceOf(InvalidTokenException.class)
+                    .hasMessage("Invalid token");
         }
         
         @Test
         void validate_withNonExistentToken_throwsInvalidToken() {
-            when(magicLinkRepository.findByToken(anyString())).thenReturn(Optional.empty());
+            String rawToken = "unknown-token";
+            String email = "s1234567@ed.ac.uk";
+            MagicLink link = new MagicLink(email, TokenHasher.hash(rawToken), MagicLinkPurpose.EMAIL_VERIFICATION, OffsetDateTime.now().plusMinutes(5));
+            
+            when(magicLinkRepository.findByToken(TokenHasher.hash(rawToken))).thenReturn(Optional.of(link));
+            when(userRepository.findByEmail(email)).thenReturn(Optional.empty());
 
-            assertThatThrownBy(() -> magicLinkService.validateAndConsumeToken("bad-token", MagicLinkPurpose.EMAIL_VERIFICATION))
-                    .isInstanceOf(InvalidTokenException.class);
+
+            assertThatThrownBy(() -> magicLinkService.validateAndConsumeToken(rawToken, MagicLinkPurpose.EMAIL_VERIFICATION))
+                    .isInstanceOf(InvalidTokenException.class)
+                    .hasMessage("No account found for this email");
         }
     }
 }

@@ -66,6 +66,15 @@ class AuthIntegrationTest {
         jdbcTemplate.execute("TRUNCATE TABLE users, magic_links, trusted_devices CASCADE");
     }
 
+    private static final String VERIFY_EMAIL_PATH = "/api/v1/auth/verify-email";
+    private static final String VERIFY_2FA_PATH = "/api/v1/auth/verify-2fa";
+
+    // Rejection reasons produced by MagicLinkService.validateAndConsumeToken.
+    private static final String TOKEN_EXPIRED = "This link has expired";
+    private static final String TOKEN_ALREADY_USED = "This link has already been used";
+    private static final String TOKEN_INVALID = "Invalid token";
+    private static final String TOKEN_NO_ACCOUNT = "No account found for this email";
+
     private String uniqueEmail() {
         return TestFixtures.uniqueEdinburghEmail();
     }
@@ -183,6 +192,68 @@ class AuthIntegrationTest {
                             .retrieve()
                             .toBodilessEntity())
                     .isInstanceOf(HttpClientErrorException.BadRequest.class);
+        }
+
+        @Test
+        void verifyEmail_withExpiredToken_returns400AndLeavesUserUnverified() {
+            String email = uniqueEmail();
+            registerUser(email, "Password123");
+            String token = latestTokenSentTo(email);
+            expireMagicLinks(email);
+
+            assertTokenRejected(VERIFY_EMAIL_PATH, token, TOKEN_EXPIRED);
+            assertThat(userRepository.findByEmail(email).orElseThrow().isEmailVerified()).isFalse();
+        }
+
+        @Test
+        void verifyEmail_withUsedToken_returns400() {
+            String email = uniqueEmail();
+            registerUser(email, "Password123");
+            String token = latestTokenSentTo(email);
+            assertThat(postToken(VERIFY_EMAIL_PATH, token).getStatusCode()).isEqualTo(HttpStatus.OK);
+
+            assertTokenRejected(VERIFY_EMAIL_PATH, token, TOKEN_ALREADY_USED);
+        }
+
+        @Test
+        void verifyEmail_withTwoFactorToken_returns400() {
+            String email = uniqueEmail();
+            String password = "Password123";
+            registerVerifyAndGetSession(email, password);
+            String twoFactorToken = requestTwoFactorToken(email, password);
+
+            assertTokenRejected(VERIFY_EMAIL_PATH, twoFactorToken, TOKEN_INVALID);
+        }
+
+        @Test
+        void verifyEmail_withSupersededToken_returns400AndLatestTokenStillWorks() {
+            String email = uniqueEmail();
+            registerUser(email, "Password123");
+            String firstToken = latestTokenSentTo(email);
+            expireResendCooldown(email);
+            client().post().uri("/api/v1/auth/resend-verification")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(new ResendVerificationRequest(email))
+                    .retrieve()
+                    .toBodilessEntity();
+            String secondToken = latestTokenSentTo(email);
+            assertThat(secondToken).isNotEqualTo(firstToken);
+
+            assertTokenRejected(VERIFY_EMAIL_PATH, firstToken, TOKEN_ALREADY_USED);
+            assertThat(magicLinkRepository.findAllByEmailAndUsedFalse(email)).hasSize(1);
+
+            assertThat(postToken(VERIFY_EMAIL_PATH, secondToken).getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(userRepository.findByEmail(email).orElseThrow().isEmailVerified()).isTrue();
+        }
+
+        @Test
+        void verifyEmail_whenUserNoLongerExists_returns400() {
+            String email = uniqueEmail();
+            registerUser(email, "Password123");
+            String token = latestTokenSentTo(email);
+            deleteAllUsers();
+
+            assertTokenRejected(VERIFY_EMAIL_PATH, token, TOKEN_NO_ACCOUNT);
         }
     }
 
@@ -470,7 +541,66 @@ class AuthIntegrationTest {
                             .toBodilessEntity())
                     .isInstanceOf(HttpClientErrorException.BadRequest.class);
         }
-        
+
+        @Test
+        void verify2fa_withExpiredToken_returns400() {
+            String email = uniqueEmail();
+            String password = "Password123";
+            registerVerifyAndGetSession(email, password);
+            String token = requestTwoFactorToken(email, password);
+            expireMagicLinks(email);
+
+            assertTokenRejected(VERIFY_2FA_PATH, token, TOKEN_EXPIRED);
+        }
+
+        @Test
+        void verify2fa_withUsedToken_returns400() {
+            String email = uniqueEmail();
+            String password = "Password123";
+            registerVerifyAndGetSession(email, password);
+            String token = requestTwoFactorToken(email, password);
+            assertThat(postToken(VERIFY_2FA_PATH, token).getStatusCode()).isEqualTo(HttpStatus.OK);
+
+            assertTokenRejected(VERIFY_2FA_PATH, token, TOKEN_ALREADY_USED);
+        }
+
+        @Test
+        void verify2fa_withEmailVerificationToken_returns400() {
+            String email = uniqueEmail();
+            registerUser(email, "Password123");
+            String verificationToken = latestTokenSentTo(email);
+
+            assertTokenRejected(VERIFY_2FA_PATH, verificationToken, TOKEN_INVALID);
+        }
+
+        @Test
+        void verify2fa_withSupersededToken_returns400AndLatestTokenStillWorks() {
+            String email = uniqueEmail();
+            String password = "Password123";
+            registerVerifyAndGetSession(email, password);
+            String firstToken = requestTwoFactorToken(email, password);
+            String secondToken = requestTwoFactorToken(email, password);
+            assertThat(secondToken).isNotEqualTo(firstToken);
+
+            assertTokenRejected(VERIFY_2FA_PATH, firstToken, TOKEN_ALREADY_USED);
+            assertThat(magicLinkRepository.findAllByEmailAndUsedFalse(email)).hasSize(1);
+
+            ResponseEntity<UserInfoResponse> response = postToken(VERIFY_2FA_PATH, secondToken);
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(TestFixtures.setCookies(response)).anyMatch(c -> c.startsWith("JSESSIONID="));
+        }
+
+        @Test
+        void verify2fa_whenUserNoLongerExists_returns400() {
+            String email = uniqueEmail();
+            String password = "Password123";
+            registerVerifyAndGetSession(email, password);
+            String token = requestTwoFactorToken(email, password);
+            deleteAllUsers();
+
+            assertTokenRejected(VERIFY_2FA_PATH, token, TOKEN_NO_ACCOUNT);
+        }
+
         @Test
         void login_withValidTrustedDevice_bypasses2faAndSetsSession() {
             String email = uniqueEmail();
@@ -854,6 +984,43 @@ class AuthIntegrationTest {
 
     private void expireResendCooldown(String email) {
         jdbcTemplate.update("UPDATE magic_links SET created_at = created_at - INTERVAL '1 hour' WHERE email = ?", email);
+    }
+
+    private void expireMagicLinks(String email) {
+        jdbcTemplate.update("UPDATE magic_links SET expires_at = expires_at - INTERVAL '1 hour' WHERE email = ?", email);
+    }
+
+    private ResponseEntity<UserInfoResponse> postToken(String path, String token) {
+        return client().post().uri(path)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(new VerifyEmailRequest(token))
+                .retrieve()
+                .toEntity(UserInfoResponse.class);
+    }
+
+    /** Logs in with valid credentials (which triggers the 2FA email) and returns the emailed 2FA token. */
+    private String requestTwoFactorToken(String email, String password) {
+        client().post().uri("/api/v1/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(new LoginRequest(email, password))
+                .retrieve()
+                .toBodilessEntity();
+        return latestTokenSentTo(email);
+    }
+
+    /**
+     * Asserts the token is rejected with a 400 whose body carries the expected reason, and that no
+     * session cookie is issued.
+     */
+    private void assertTokenRejected(String path, String token, String expectedDetail) {
+        assertThatThrownBy(() -> postToken(path, token))
+                .isInstanceOfSatisfying(HttpClientErrorException.BadRequest.class, e -> {
+                    assertThat(e.getResponseBodyAsString()).contains(expectedDetail);
+                    HttpHeaders headers = e.getResponseHeaders();
+                    List<String> setCookies = headers == null ? null : headers.get(HttpHeaders.SET_COOKIE);
+                    assertThat(setCookies == null ? List.<String>of() : setCookies)
+                            .noneMatch(c -> c.startsWith("JSESSIONID="));
+                });
     }
 
     private String latestTokenSentTo(String email) {

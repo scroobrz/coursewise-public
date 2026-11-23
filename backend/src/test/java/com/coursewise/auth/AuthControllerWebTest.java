@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EmptySource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -256,16 +257,27 @@ class AuthControllerWebTest {
                     .andExpect(jsonPath("$.email").value("s1234567@ed.ac.uk"));
         }
 
-        @Test
-        void verifyEmail_withInvalidToken_returns400() throws Exception {
-            VerifyEmailRequest request = new VerifyEmailRequest("bad-token");
-            doThrow(new InvalidTokenException("Invalid token"))
-                .when(authService).verifyRegistrationEmail(eq("bad-token"), any(HttpServletRequest.class));
+        @ParameterizedTest()
+        @CsvSource(delimiter = '|', value = {
+                "expired token                    | This link has expired",
+                "used or superseded token         | This link has already been used",
+                "wrong-purpose token              | Invalid token",
+                "token with no corresponding user | No account found for this email"
+        })
+        void verifyEmail_withInvalidToken_returns400ProblemDetail(String scenario, String serviceMessage) throws Exception {
+            VerifyEmailRequest request = new VerifyEmailRequest("rejected-token");
+            doThrow(new InvalidTokenException(serviceMessage))
+                .when(authService).verifyRegistrationEmail(eq("rejected-token"), any(HttpServletRequest.class));
 
             mockMvc.perform(post("/api/v1/auth/verify-email").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
-                    .andExpect(status().isBadRequest());
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.title").value("Invalid Token"))
+                    .andExpect(jsonPath("$.detail").value(serviceMessage))
+                    .andExpect(cookie().doesNotExist("JSESSIONID"));
+
+            verify(authService).verifyRegistrationEmail(eq("rejected-token"), any(HttpServletRequest.class));
         }
     }
 
@@ -377,16 +389,27 @@ class AuthControllerWebTest {
                     .andExpect(jsonPath("$.email").value("s1234567@ed.ac.uk"));
         }
 
-        @Test
-        void verify2fa_withInvalidToken_returns400() throws Exception {
-            VerifyEmailRequest request = new VerifyEmailRequest("bad-token");
-            doThrow(new InvalidTokenException("Invalid token"))
-                .when(authService).verify2fa(anyString(), any(HttpServletRequest.class));
+        @ParameterizedTest()
+        @CsvSource(delimiter = '|', value = {
+                "expired token                    | This link has expired",
+                "used or superseded token         | This link has already been used",
+                "wrong-purpose token              | Invalid token",
+                "token with no corresponding user | No account found for this email"
+        })
+        void verify2fa_withInvalidToken_returns400ProblemDetail(String scenario, String serviceMessage) throws Exception {
+            VerifyEmailRequest request = new VerifyEmailRequest("rejected-token");
+            doThrow(new InvalidTokenException(serviceMessage))
+                .when(authService).verify2fa(eq("rejected-token"), any(HttpServletRequest.class));
 
             mockMvc.perform(post("/api/v1/auth/verify-2fa").with(csrf())
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
-                    .andExpect(status().isBadRequest());
+                    .andExpect(status().isBadRequest())
+                    .andExpect(jsonPath("$.title").value("Invalid Token"))
+                    .andExpect(jsonPath("$.detail").value(serviceMessage))
+                    .andExpect(cookie().doesNotExist("JSESSIONID"));
+
+            verify(authService).verify2fa(eq("rejected-token"), any(HttpServletRequest.class));
         }
     }
 
