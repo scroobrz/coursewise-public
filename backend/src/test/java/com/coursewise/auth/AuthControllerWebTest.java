@@ -597,6 +597,20 @@ class AuthControllerWebTest {
         }
 
         @Test
+        void updateProfile_acceptsNullNames() throws Exception {
+            MockHttpSession session = new MockHttpSession();
+            SecurityContext securityContext = SecurityContextHolder.createEmptyContext();
+            UUID userId = UUID.randomUUID();
+            securityContext.setAuthentication(new UsernamePasswordAuthenticationToken(userId, null, List.of()));
+            session.setAttribute(HttpSessionSecurityContextRepository.SPRING_SECURITY_CONTEXT_KEY, securityContext);
+
+            mockMvc.perform(patch("/api/v1/auth/profile")
+                            .session(session).contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(new UpdateProfileRequest(null, null))).with(csrf()))
+                    .andExpect(status().isOk());
+        }
+
+        @Test
         void updateProfile_whenNotAuthenticated_returns401() throws Exception {
             mockMvc.perform(patch("/api/v1/auth/profile").contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(new UpdateProfileRequest("John", "Doe"))).with(csrf()))

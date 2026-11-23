@@ -12,6 +12,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.http.MediaType;
@@ -28,6 +31,7 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -180,17 +184,38 @@ class ReviewControllerWebTest {
                     .andExpect(jsonPath("$.createdAt").value(FIXED_CREATED_AT_JSON));
         }
 
-        @Test
-        void upsertReview_invalidPayload_returnsBadRequest() throws Exception {
-            // Invalid payload: workloadRating > 5
-            ReviewRequest request = new ReviewRequest(6, 3, 5, 4, true, "Great!");
-
+        @ParameterizedTest
+        @MethodSource("invalidReviewRequests")
+        void upsertReview_invalidPayload_returnsBadRequest(ReviewRequest badRequest) throws Exception {
             mockMvc.perform(post("/api/v1/courses/INFR11159/reviews")
                             .principal(principal)
                             .contentType(MediaType.APPLICATION_JSON)
-                            .content(objectMapper.writeValueAsString(request)))
+                            .content(objectMapper.writeValueAsString(badRequest)))
                     .andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.status").value(400));
+        }
+
+        static Stream<Arguments> invalidReviewRequests() {
+            return Stream.of(
+                        Arguments.of(new ReviewRequest(6, 3, 3, 3, true, "body")),
+                        Arguments.of(new ReviewRequest(3, 6, 3, 3, true, "body")),
+                        Arguments.of(new ReviewRequest(3, 3, 6, 3, true, "body")),
+                        Arguments.of(new ReviewRequest(3, 0, 3, 6, true, "body")),
+                        Arguments.of(new ReviewRequest(-1, 3, 3, 3, true, "body")),
+                        Arguments.of(new ReviewRequest(3, -1, 3, 3, true, "body")),
+                        Arguments.of(new ReviewRequest(3, 3, -1, 3, true, "body")),
+                        Arguments.of(new ReviewRequest(3, 3, 3, -1, true, "body")),
+                        Arguments.of(new ReviewRequest(3, 3, 3, 3, null, "body"))
+            );
+        }
+
+        @Test
+        void upsertReview_acceptsNullBody() throws Exception {
+            mockMvc.perform(post("/api/v1/courses/INFR11159/reviews")
+                            .principal(principal)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(new ReviewRequest(4, 3, 5, 4, true, null))))
+                    .andExpect(status().isCreated());
         }
 
         @Test
