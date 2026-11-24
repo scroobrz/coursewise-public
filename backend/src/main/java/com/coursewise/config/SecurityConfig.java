@@ -18,10 +18,7 @@ import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 import java.util.List;
 
-/**
- * Security configuration for password + magic-link 2FA session authentication.
- * Defines access rules, CORS, password encoding, and disables CSRF for the MVP API.
- */
+
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
