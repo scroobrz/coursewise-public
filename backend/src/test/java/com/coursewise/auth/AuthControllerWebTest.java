@@ -615,6 +615,8 @@ class AuthControllerWebTest {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isForbidden());
+
+            verifyNoInteractions(authService);
         }
 
         @Test
@@ -625,6 +627,8 @@ class AuthControllerWebTest {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isForbidden());
+
+            verifyNoInteractions(authService);
         }
 
         @Test
@@ -635,6 +639,8 @@ class AuthControllerWebTest {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isForbidden());
+
+            verifyNoInteractions(authService);
         }
 
         @Test
@@ -645,6 +651,8 @@ class AuthControllerWebTest {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isForbidden());
+
+            verifyNoInteractions(authService);
         }
 
         @Test
@@ -655,18 +663,24 @@ class AuthControllerWebTest {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(objectMapper.writeValueAsString(request)))
                     .andExpect(status().isForbidden());
+
+            verifyNoInteractions(authService);
         }
 
         @Test
         void trustDevice_withoutCsrfToken_returns403() throws Exception {
             mockMvc.perform(post("/api/v1/auth/trust-device"))
                     .andExpect(status().isForbidden());
+
+            verifyNoInteractions(authService);
         }
 
         @Test
         void logout_withoutCsrfToken_returns403() throws Exception {
             mockMvc.perform(post("/api/v1/auth/logout"))
                     .andExpect(status().isForbidden());
+
+            verifyNoInteractions(authService);
         }
     }
 }

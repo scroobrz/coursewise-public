@@ -308,4 +308,67 @@ class ReviewControllerWebTest {
             verifyNoInteractions(reviewService);
         }
     }
+
+    @Nested
+    class CsrfProtection {
+
+        // Authenticated requests, so a 403 can only come from the CSRF filter.
+
+        @Test
+        void upsertReview_withoutCsrfToken_returns403() throws Exception {
+            ReviewRequest request = new ReviewRequest(4, 3, 5, 4, true, "Great!");
+
+            mockMvc.perform(post("/api/v1/courses/INFR11159/reviews")
+                            .with(authentication(principal))
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isForbidden());
+
+            verifyNoInteractions(reviewService);
+        }
+
+        @Test
+        void upsertReview_withInvalidCsrfToken_returns403() throws Exception {
+            ReviewRequest request = new ReviewRequest(4, 3, 5, 4, true, "Great!");
+
+            mockMvc.perform(post("/api/v1/courses/INFR11159/reviews")
+                            .with(authentication(principal)).with(csrf().useInvalidToken())
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isForbidden());
+
+            verifyNoInteractions(reviewService);
+        }
+
+        @Test
+        void deleteReview_withoutCsrfToken_returns403() throws Exception {
+            mockMvc.perform(delete("/api/v1/courses/INFR11159/reviews")
+                            .with(authentication(principal)))
+                    .andExpect(status().isForbidden());
+
+            verifyNoInteractions(reviewService);
+        }
+
+        @Test
+        void deleteReview_withInvalidCsrfToken_returns403() throws Exception {
+            mockMvc.perform(delete("/api/v1/courses/INFR11159/reviews")
+                            .with(authentication(principal)).with(csrf().useInvalidToken()))
+                    .andExpect(status().isForbidden());
+
+            verifyNoInteractions(reviewService);
+        }
+
+        @Test
+        void upsertReview_unauthenticatedWithoutCsrfToken_returns403() throws Exception {
+            // CsrfFilter runs before authorization, so a missing token wins over the 401.
+            ReviewRequest request = new ReviewRequest(4, 3, 5, 4, true, "Great!");
+
+            mockMvc.perform(post("/api/v1/courses/INFR11159/reviews")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(objectMapper.writeValueAsString(request)))
+                    .andExpect(status().isForbidden());
+
+            verifyNoInteractions(reviewService);
+        }
+    }
 }
