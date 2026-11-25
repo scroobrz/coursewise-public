@@ -383,6 +383,7 @@ class AuthIntegrationTest {
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
             assertThat(response.getBody().status()).isEqualTo("2fa_required");
             assertThat(response.getBody().user()).isNull();
+            assertThat(TestFixtures.setCookies(response)).noneMatch(c -> c.startsWith("JSESSIONID="));
         }
 
         @ParameterizedTest()
@@ -451,6 +452,95 @@ class AuthIntegrationTest {
                             .toBodilessEntity())
                     .isInstanceOf(HttpClientErrorException.Unauthorized.class);
         }
+
+        @Test
+        void login_withValidTrustedDevice_bypasses2faAndSetsSession() {
+            String email = uniqueEmail();
+            String password = "Password123";
+            registerVerifyAndGetSession(email, password);
+            
+            String token = requestTwoFactorToken(email, password);
+
+            ResponseEntity<UserInfoResponse> verifyResponse = postToken(VERIFY_2FA_PATH, token);
+                    
+            String jsessionId = TestFixtures.extractCookie(verifyResponse, "JSESSIONID");
+                    
+            ResponseEntity<Void> trustResponse = client().post().uri("/api/v1/auth/trust-device")
+                    .header(HttpHeaders.USER_AGENT, "TestBrowser/1.0")
+                    .header(HttpHeaders.COOKIE, jsessionId)
+                    .retrieve()
+                    .toBodilessEntity();
+                    
+            String tdCookie = TestFixtures.extractCookie(trustResponse, "coursewise_td");
+                    
+            ResponseEntity<LoginResponse> loginResponse = client().post().uri("/api/v1/auth/login")
+                    .header(HttpHeaders.COOKIE, tdCookie)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(new LoginRequest(email, password))
+                    .retrieve()
+                    .toEntity(LoginResponse.class);
+                    
+            assertThat(loginResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(loginResponse.getBody().status()).isEqualTo("authenticated");
+            assertThat(loginResponse.getBody().user().email()).isEqualTo(email);
+            
+            // Session cookie should be set again
+            assertThat(TestFixtures.setCookies(loginResponse)).anyMatch(c -> c.startsWith("JSESSIONID="));
+        }
+
+        @Test
+        void login_withInvalidTrustedDeviceToken_returns200AndDoesNotBypass2fa() {
+            String email = uniqueEmail();
+            String password = "Password123";
+            registerVerifyAndGetSession(email, password);
+            
+            ResponseEntity<LoginResponse> response = client().post().uri("/api/v1/auth/login")
+                    .header(HttpHeaders.COOKIE, "coursewise_td=invalidtoken")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(new LoginRequest(email, password))
+                    .retrieve()
+                    .toEntity(LoginResponse.class);
+                    
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(response.getBody().status()).isEqualTo("2fa_required");
+            assertThat(response.getBody().user()).isNull();
+            assertThat(TestFixtures.setCookies(response)).noneMatch(c -> c.startsWith("JSESSIONID="));
+            assertThat(TestFixtures.setCookies(response)).noneMatch(c -> c.startsWith("coursewise_td="));
+        }
+
+        @Test
+        void login_withExpiredTrustedDeviceToken_returns200AndDoesNotBypass2fa() {
+            String email = uniqueEmail();
+            String password = "Password123";
+            registerVerifyAndGetSession(email, password);
+            String token = requestTwoFactorToken(email, password);
+
+            ResponseEntity<UserInfoResponse> verifyResponse = postToken(VERIFY_2FA_PATH, token);
+                    
+            String jsessionId = TestFixtures.extractCookie(verifyResponse, "JSESSIONID");
+                    
+            ResponseEntity<Void> trustResponse = client().post().uri("/api/v1/auth/trust-device")
+                    .header(HttpHeaders.USER_AGENT, "TestBrowser/1.0")
+                    .header(HttpHeaders.COOKIE, jsessionId)
+                    .retrieve()
+                    .toBodilessEntity();
+                    
+            String tdCookie = TestFixtures.extractCookie(trustResponse, "coursewise_td");
+            expireTrustedDeviceToken(TokenHasher.hash(tdCookie.substring("coursewise_td=".length())));
+            
+            ResponseEntity<LoginResponse> response = client().post().uri("/api/v1/auth/login")
+                    .header(HttpHeaders.COOKIE, tdCookie)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(new LoginRequest(email, password))
+                    .retrieve()
+                    .toEntity(LoginResponse.class);
+                    
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(response.getBody().status()).isEqualTo("2fa_required");
+            assertThat(response.getBody().user()).isNull();
+            assertThat(TestFixtures.setCookies(response)).noneMatch(c -> c.startsWith("JSESSIONID="));
+            assertThat(TestFixtures.setCookies(response)).noneMatch(c -> c.startsWith("coursewise_td="));
+        }
     }
 
     @Nested
@@ -499,6 +589,67 @@ class AuthIntegrationTest {
                     .retrieve().toBodilessEntity())
                     .isInstanceOf(HttpClientErrorException.Unauthorized.class);
             assertThat(trustedDeviceRepository.count()).isZero();
+        }
+
+        @Test
+        void trustedDeviceCookie_ofAnotherUser_doesNotBypass2fa_butCanBeSharedOnceTrusted() {
+            String emailA = uniqueEmail();
+            String emailB = uniqueEmail();
+            String password = "Password123";
+
+            // User A registers and trusts the device
+            registerVerifyAndGetSession(emailA, password);
+            
+            String tokenA = requestTwoFactorToken(emailA, password);
+            ResponseEntity<UserInfoResponse> verifyA = postToken(VERIFY_2FA_PATH, tokenA);
+            String sessionA = TestFixtures.extractCookie(verifyA, "JSESSIONID");
+                    
+            ResponseEntity<Void> trustA = client().post().uri("/api/v1/auth/trust-device")
+                    .header(HttpHeaders.COOKIE, sessionA)
+                    .header(HttpHeaders.USER_AGENT, "SharedBrowser")
+                    .retrieve().toBodilessEntity();
+            String tdCookie = TestFixtures.extractCookie(trustA, "coursewise_td");
+
+            // User B registers
+            registerVerifyAndGetSession(emailB, password);
+            
+            // User B logs in using the same device cookie
+            ResponseEntity<LoginResponse> loginB = client().post().uri("/api/v1/auth/login")
+                    .header(HttpHeaders.COOKIE, tdCookie)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(new LoginRequest(emailB, password))
+                    .retrieve().toEntity(LoginResponse.class);
+                    
+            // User B should still require 2FA, because they haven't explicitly trusted the device yet
+            assertThat(loginB.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(loginB.getBody().status()).isEqualTo("2fa_required");
+            
+            // User B completes 2FA
+            String tokenB = latestTokenSentTo(emailB);
+            ResponseEntity<UserInfoResponse> verifyB = postToken(VERIFY_2FA_PATH, tokenB);
+            String sessionB = TestFixtures.extractCookie(verifyB, "JSESSIONID");
+                    
+            // User B now trusts the device too (sending the existing tdCookie)
+            ResponseEntity<Void> trustB = client().post().uri("/api/v1/auth/trust-device")
+                    .header(HttpHeaders.COOKIE, sessionB + "; " + tdCookie) // Send both JSESSIONID and coursewise_td
+                    .header(HttpHeaders.USER_AGENT, "SharedBrowser")
+                    .retrieve().toBodilessEntity();
+            String newTdCookie = TestFixtures.extractCookie(trustB, "coursewise_td");
+                    
+            // The returned cookie token should be exactly the same (shared token)
+            assertThat(tdCookie).isEqualTo(newTdCookie);
+
+            // Database should have exactly 2 records for the trusted devices
+            assertThat(trustedDeviceRepository.count()).isEqualTo(2);
+
+            // Now that B has trusted the device, the shared cookie lets B bypass 2FA
+            ResponseEntity<LoginResponse> loginBTrusted = client().post().uri("/api/v1/auth/login")
+                    .header(HttpHeaders.COOKIE, tdCookie)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(new LoginRequest(emailB, password))
+                    .retrieve().toEntity(LoginResponse.class);
+            assertThat(loginBTrusted.getBody().status()).isEqualTo("authenticated");
+            assertThat(loginBTrusted.getBody().user().email()).isEqualTo(emailB);
         }
     }
 
@@ -602,102 +753,6 @@ class AuthIntegrationTest {
             deleteAllUsers();
 
             assertTokenRejected(VERIFY_2FA_PATH, token, TOKEN_NO_ACCOUNT);
-        }
-
-        @Test
-        void login_withValidTrustedDevice_bypasses2faAndSetsSession() {
-            String email = uniqueEmail();
-            String password = "Password123";
-            registerVerifyAndGetSession(email, password);
-            
-            String token = requestTwoFactorToken(email, password);
-
-            ResponseEntity<UserInfoResponse> verifyResponse = postToken(VERIFY_2FA_PATH, token);
-                    
-            String jsessionId = TestFixtures.extractCookie(verifyResponse, "JSESSIONID");
-                    
-            ResponseEntity<Void> trustResponse = client().post().uri("/api/v1/auth/trust-device")
-                    .header(HttpHeaders.USER_AGENT, "TestBrowser/1.0")
-                    .header(HttpHeaders.COOKIE, jsessionId)
-                    .retrieve()
-                    .toBodilessEntity();
-                    
-            String tdCookie = TestFixtures.extractCookie(trustResponse, "coursewise_td");
-                    
-            ResponseEntity<LoginResponse> loginResponse = client().post().uri("/api/v1/auth/login")
-                    .header(HttpHeaders.COOKIE, tdCookie)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new LoginRequest(email, password))
-                    .retrieve()
-                    .toEntity(LoginResponse.class);
-                    
-            assertThat(loginResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
-            assertThat(loginResponse.getBody().status()).isEqualTo("authenticated");
-            assertThat(loginResponse.getBody().user().email()).isEqualTo(email);
-            
-            // Session cookie should be set again
-            assertThat(TestFixtures.setCookies(loginResponse)).anyMatch(c -> c.startsWith("JSESSIONID="));
-        }
-
-        @Test
-        void trustedDeviceCookie_ofAnotherUser_doesNotBypass2fa_butCanBeSharedOnceTrusted() {
-            String emailA = uniqueEmail();
-            String emailB = uniqueEmail();
-            String password = "Password123";
-
-            // User A registers and trusts the device
-            registerVerifyAndGetSession(emailA, password);
-            
-            String tokenA = requestTwoFactorToken(emailA, password);
-            ResponseEntity<UserInfoResponse> verifyA = postToken(VERIFY_2FA_PATH, tokenA);
-            String sessionA = TestFixtures.extractCookie(verifyA, "JSESSIONID");
-                    
-            ResponseEntity<Void> trustA = client().post().uri("/api/v1/auth/trust-device")
-                    .header(HttpHeaders.COOKIE, sessionA)
-                    .header(HttpHeaders.USER_AGENT, "SharedBrowser")
-                    .retrieve().toBodilessEntity();
-            String tdCookie = TestFixtures.extractCookie(trustA, "coursewise_td");
-
-            // User B registers
-            registerVerifyAndGetSession(emailB, password);
-            
-            // User B logs in using the same device cookie
-            ResponseEntity<LoginResponse> loginB = client().post().uri("/api/v1/auth/login")
-                    .header(HttpHeaders.COOKIE, tdCookie)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new LoginRequest(emailB, password))
-                    .retrieve().toEntity(LoginResponse.class);
-                    
-            // User B should still require 2FA, because they haven't explicitly trusted the device yet
-            assertThat(loginB.getStatusCode()).isEqualTo(HttpStatus.OK);
-            assertThat(loginB.getBody().status()).isEqualTo("2fa_required");
-            
-            // User B completes 2FA
-            String tokenB = latestTokenSentTo(emailB);
-            ResponseEntity<UserInfoResponse> verifyB = postToken(VERIFY_2FA_PATH, tokenB);
-            String sessionB = TestFixtures.extractCookie(verifyB, "JSESSIONID");
-                    
-            // User B now trusts the device too (sending the existing tdCookie)
-            ResponseEntity<Void> trustB = client().post().uri("/api/v1/auth/trust-device")
-                    .header(HttpHeaders.COOKIE, sessionB + "; " + tdCookie) // Send both JSESSIONID and coursewise_td
-                    .header(HttpHeaders.USER_AGENT, "SharedBrowser")
-                    .retrieve().toBodilessEntity();
-            String newTdCookie = TestFixtures.extractCookie(trustB, "coursewise_td");
-                    
-            // The returned cookie token should be exactly the same (shared token)
-            assertThat(tdCookie).isEqualTo(newTdCookie);
-
-            // Database should have exactly 2 records for the trusted devices
-            assertThat(trustedDeviceRepository.count()).isEqualTo(2);
-
-            // Now that B has trusted the device, the shared cookie lets B bypass 2FA
-            ResponseEntity<LoginResponse> loginBTrusted = client().post().uri("/api/v1/auth/login")
-                    .header(HttpHeaders.COOKIE, tdCookie)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(new LoginRequest(emailB, password))
-                    .retrieve().toEntity(LoginResponse.class);
-            assertThat(loginBTrusted.getBody().status()).isEqualTo("authenticated");
-            assertThat(loginBTrusted.getBody().user().email()).isEqualTo(emailB);
         }
     }
 
@@ -954,6 +1009,11 @@ class AuthIntegrationTest {
 
     private void expireMagicLinks(String email) {
         jdbcTemplate.update("UPDATE magic_links SET expires_at = expires_at - INTERVAL '1 hour' WHERE email = ?", email);
+    }
+
+    private void expireTrustedDeviceToken(String token) {
+        int updated = jdbcTemplate.update("UPDATE trusted_devices SET expires_at = now() - INTERVAL '1 minute' WHERE device_token = ?", token);
+        assertThat(updated).isPositive();
     }
 
     private ResponseEntity<UserInfoResponse> postToken(String path, String token) {
